@@ -204,6 +204,16 @@ from the banner. This is a local viewing preference, not a permissions system.
 Project write requests are rejected by the server while the requesting browser
 is read-only; application settings remain available.
 
+### Storing the manual order in beads
+
+By default the Manual sort order stays in Scotty's own `config.json`, so only
+Scotty sees it. Turn on **Manual order** in Settings (or launch with
+`SCOTTY_ORDER_STORE=beads` to make it the default) and Scotty writes each
+card's position to its `scotty.rank` metadata instead (position × 1024, only on
+beads whose rank changes). Agents and other clients then see the order in
+`bd list --json` and `bd ready --json`. Your saved order is copied across once
+when you switch it on. `scripts/test-order-store.mjs` documents how to test it.
+
 ### Opening Scotty by a hostname
 
 Scotty only answers browsers that address it as `localhost` (or `*.localhost`)

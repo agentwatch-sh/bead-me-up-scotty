@@ -22,6 +22,12 @@ export interface ProjectEntry {
   lastOpened: string;
 }
 
+export type OrderStore = "local" | "beads";
+
+function defaultOrderStore(): OrderStore {
+  return process.env.SCOTTY_ORDER_STORE === "beads" ? "beads" : "local";
+}
+
 export interface AppConfig {
   humanActor: string;
   humanAllowlist: string[];
@@ -34,6 +40,14 @@ export interface AppConfig {
   orders: Record<string, Record<string, string[]>>;
   /** Opt-in: show the gamification XP/level layer (off by default). */
   gamification: boolean;
+  /**
+   * Where the manual board order lives. "local" (default) keeps it in this
+   * file; "beads" writes it to each bead's `scotty.rank` metadata so agents and
+   * other bd clients see it. SCOTTY_ORDER_STORE sets the default.
+   */
+  orderStore: OrderStore;
+  /** Projects whose saved local order was already copied into beads metadata. */
+  ordersMigrated?: string[];
   /**
    * True once the human actor was saved from Settings. Until then the actor
    * follows the computed default, even if an older version wrote it to disk.
@@ -136,6 +150,7 @@ function defaults(): AppConfig {
     projects: [],
     orders: {},
     gamification: false,
+    orderStore: defaultOrderStore(),
   };
 }
 
@@ -268,6 +283,11 @@ export function getConfig(): AppConfig {
         ? (onDisk.orders as Record<string, Record<string, string[]>>)
         : {},
     gamification: typeof onDisk?.gamification === "boolean" ? onDisk.gamification : d.gamification,
+    orderStore:
+      onDisk?.orderStore === "local" || onDisk?.orderStore === "beads" ? onDisk.orderStore : d.orderStore,
+    ordersMigrated: Array.isArray(onDisk?.ordersMigrated)
+      ? onDisk.ordersMigrated.filter((v): v is string => typeof v === "string")
+      : [],
     humanActorChosen: onDisk?.humanActorChosen === true,
   };
 
@@ -306,9 +326,11 @@ export function closeActor(assignee: string | null | undefined): string {
 
 /** Update global settings (actor / allowlist / poll). Project registry has its own mutators. */
 export function saveConfig(
-  patch: Partial<Pick<AppConfig, "humanActor" | "humanAllowlist" | "pollIntervalMs" | "gamification">>,
+  patch: Partial<Pick<AppConfig, "humanActor" | "humanAllowlist" | "pollIntervalMs" | "gamification" | "orderStore">>,
 ): AppConfig {
   const next = { ...getConfig(), ...patch };
+  // Going back to local means the next switch to beads must copy the order again.
+  if (patch.orderStore === "local") next.ordersMigrated = [];
   if (patch.humanActor !== undefined) next.humanActorChosen = true;
   persist(next);
   return next;
@@ -379,6 +401,14 @@ export function renameProject(id: string, name: string): ProjectEntry | undefine
 /** All saved column orders for a project: columnId → ordered bead ids. */
 export function getColumnOrders(projectId: string): Record<string, string[]> {
   return getConfig().orders[projectId] ?? {};
+}
+
+/** Mark a project's local order as copied into beads metadata. */
+export function markOrderMigrated(projectId: string): void {
+  const cfg = getConfig();
+  if (cfg.ordersMigrated?.includes(projectId)) return;
+  cfg.ordersMigrated = [...(cfg.ordersMigrated ?? []), projectId];
+  persist(cfg);
 }
 
 /** Replace the saved order for one column of one project. */

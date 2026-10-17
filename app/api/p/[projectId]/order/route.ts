@@ -1,5 +1,7 @@
 import { z } from "zod";
-import { getColumnOrders, setColumnOrder } from "@/lib/config";
+import { getConfig, isReadOnly } from "@/lib/config";
+import { getColumnOrders, setColumnOrder } from "@/lib/order-store";
+import { getStore } from "@/lib/store";
 import { ok, fail } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
@@ -11,10 +13,15 @@ const putSchema = z.object({
   ids: z.array(z.string()),
 });
 
-export async function GET(_req: Request, { params }: Ctx) {
+export async function GET(req: Request, { params }: Ctx) {
   try {
     const { projectId } = await params;
-    return ok({ orders: getColumnOrders(projectId) });
+    const cfg = getConfig();
+    return ok({
+      orders: await getColumnOrders(
+        projectId, () => getStore(projectId), cfg.humanActor, !isReadOnly(req),
+      ),
+    });
   } catch (e) {
     return fail(e);
   }
@@ -24,7 +31,10 @@ export async function PUT(req: Request, { params }: Ctx) {
   try {
     const { projectId } = await params;
     const { columnId, ids } = putSchema.parse(await req.json());
-    return ok({ orders: setColumnOrder(projectId, columnId, ids) });
+    const cfg = getConfig();
+    return ok({
+      orders: await setColumnOrder(projectId, columnId, ids, () => getStore(projectId), cfg.humanActor),
+    });
   } catch (e) {
     return fail(e);
   }

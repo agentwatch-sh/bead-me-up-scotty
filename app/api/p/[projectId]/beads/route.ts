@@ -21,6 +21,7 @@ export async function GET(_req: Request, { params }: Ctx) {
         humanAllowlist: cfg.humanAllowlist,
         pollIntervalMs: cfg.pollIntervalMs,
         gamification: cfg.gamification,
+        orderStore: cfg.orderStore,
         readOnly: isReadOnly(_req),
         lanePrefix: lanePrefix(),
       },
