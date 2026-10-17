@@ -21,7 +21,24 @@ export const RANK_STEP = 1024;
 
 function rankOf(bead: Bead): number | null {
   const v = bead.metadata?.[RANK_KEY];
-  return typeof v === "number" && Number.isFinite(v) ? v : null;
+  // Accept a numeric string too, in case bd ever returns metadata values as text.
+  const n = typeof v === "string" && v.trim() !== "" ? Number(v) : v;
+  return typeof n === "number" && Number.isFinite(n) ? n : null;
+}
+
+// A reorder reads the beads, diffs the ranks, then writes the changes. Two of
+// those overlapping would interleave their writes, so each project's whole
+// read -> diff -> write sequence (and the migration) runs one at a time.
+const chains = new Map<string, Promise<unknown>>();
+function withProjectLock<T>(projectId: string, fn: () => Promise<T>): Promise<T> {
+  const prev = chains.get(projectId) ?? Promise.resolve();
+  const next = prev.then(fn, fn);
+  const tail = next.catch(() => undefined);
+  chains.set(projectId, tail);
+  void tail.then(() => {
+    if (chains.get(projectId) === tail) chains.delete(projectId);
+  });
+  return next;
 }
 
 /** Each column's ranked beads, lowest rank first. Unranked beads are left out. */
@@ -55,7 +72,7 @@ async function writeRanks(store: BeadsStore, beads: Bead[], ids: string[], actor
   }
 }
 
-/** Copy a project's saved local order into beads metadata, once. */
+/** Copy a project's saved local order into beads metadata, once. Call with the project lock held. */
 async function migrateLocal(projectId: string, store: BeadsStore, actor: string) {
   if (getConfig().ordersMigrated?.includes(projectId)) return;
   const local = getLocalOrders(projectId);
@@ -76,7 +93,8 @@ export async function migrateAllLocalOrders(
 ) {
   for (const p of projects) {
     try {
-      await migrateLocal(p.id, await p.store(), actor);
+      const store = await p.store();
+      await withProjectLock(p.id, () => migrateLocal(p.id, store, actor));
     } catch {
       /* migrates lazily on the next order request */
     }
@@ -96,12 +114,14 @@ export async function getColumnOrders(
   // The local backend never reads beads, so it needs no store (or bd) at all.
   if (getConfig().orderStore !== "beads") return getLocalOrders(projectId);
   const store = await openStore();
-  const pending = !getConfig().ordersMigrated?.includes(projectId);
-  if (pending && writable) await migrateLocal(projectId, store, actor);
-  const derived = deriveOrders(await store.list());
-  return pending && !getConfig().ordersMigrated?.includes(projectId)
-    ? { ...getLocalOrders(projectId), ...derived }
-    : derived;
+  return withProjectLock(projectId, async () => {
+    const pending = !getConfig().ordersMigrated?.includes(projectId);
+    if (pending && writable) await migrateLocal(projectId, store, actor);
+    const derived = deriveOrders(await store.list());
+    return pending && !getConfig().ordersMigrated?.includes(projectId)
+      ? { ...getLocalOrders(projectId), ...derived }
+      : derived;
+  });
 }
 
 /** Replace one column's order, then return all of the project's column orders. */
@@ -114,7 +134,10 @@ export async function setColumnOrder(
 ): Promise<Record<string, string[]>> {
   if (getConfig().orderStore !== "beads") return setLocalOrder(projectId, columnId, ids);
   const store = await openStore();
-  await migrateLocal(projectId, store, actor);
-  await writeRanks(store, await store.list(), ids, actor);
-  return deriveOrders(await store.list());
+  return withProjectLock(projectId, async () => {
+    await migrateLocal(projectId, store, actor);
+    // Read the beads only now that the lock is held, so the diff is current.
+    await writeRanks(store, await store.list(), ids, actor);
+    return deriveOrders(await store.list());
+  });
 }

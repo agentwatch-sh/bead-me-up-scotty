@@ -80,6 +80,30 @@ if (phase === "demo") {
   assert.deepEqual((await orderOf(pid)).ready, [a, b, c]);
   assert.deepEqual(await stamp(), settled, "reading must not rewrite");
 
+  // Overlapping reorders: the final ranks match exactly one requested order.
+  const orders = [[a, b, c], [c, b, a], [b, c, a], [a, c, b]];
+  for (let round = 0; round < 3; round++) {
+    await Promise.all(orders.map((ids) => putOrder(pid, "ready", ids)));
+    const final = (await orderOf(pid)).ready;
+    assert.ok(orders.some((ids) => JSON.stringify(ids) === JSON.stringify(final)), `overlapping PUTs left a mixed order: ${final}`);
+    assert.deepEqual(await ranks(pid, final), [0, 1024, 2048], "ranks must be exactly position x 1024");
+  }
+
+  // A GET-triggered migration overlapping a PUT must not overwrite the newer order.
+  for (let round = 0; round < 3; round++) {
+    await setStore("local");
+    await putOrder(pid, "ready", [a, b, c]);
+    const newer = round % 2 ? [c, a, b] : [b, c, a];
+    await Promise.all([
+      setStore("beads"),
+      orderOf(pid),
+      putOrder(pid, "ready", newer),
+      orderOf(pid),
+    ]);
+    assert.deepEqual((await orderOf(pid)).ready, newer, "a migration must not clobber a newer PUT");
+    assert.deepEqual(await ranks(pid, newer), [0, 1024, 2048]);
+  }
+
   // Unranked beads are not listed; the board puts them after ranked ones.
   const unranked = (await beadsOf(pid)).filter((x) => x.metadata?.[RANK] === undefined && x.status === "open" && !(x.dependencies ?? []).length);
   for (const u of unranked) assert.ok(!(await orderOf(pid)).ready.includes(u.id));
