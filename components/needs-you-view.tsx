@@ -6,6 +6,7 @@ import { useRespondHuman, useDismissHuman } from "@/hooks/use-beads";
 import { Icon, typeIconName } from "@/components/icons";
 import { OriginBadge } from "@/components/board/bead-card";
 import { beadOrigin } from "@/lib/attribution";
+import { withBasePath } from "@/lib/base-path";
 import {
   needsHuman,
   readyHumanGate,
@@ -100,7 +101,7 @@ function ReviewLinks({ bead }: { bead: Bead }) {
       <div data-review-links className="flex flex-wrap gap-[6px]">
         {links.map(link => {
           const attachment = link.startsWith("attachment://");
-          const href = attachment ? api.attachments.urlFor(projectId, link) : link;
+          const href = attachment ? api.attachments.urlFor(projectId, link) : withBasePath(link);
           const label = attachment || link.startsWith("/api/p/")
             ? `Attachment: ${link.split("/").at(-1)}` : link.replace(/^https?:\/\//i, "");
           return (

@@ -228,6 +228,52 @@ Scripts and tools that call the API at `localhost` or an IP address are
 unaffected; only browser requests carry the `Origin` header that the
 cross-site check looks at.
 
+### Serving Scotty under a sub-path
+
+To put Scotty at `https://example.com/board/` instead of the root of a host,
+set `SCOTTY_BASE_PATH` to the sub-path (leading slash, no trailing slash). It
+becomes Next's `basePath`, and the pages, assets, API, live-update stream,
+notification links and copied permalinks all move under it. Unset (the default)
+changes nothing.
+
+The prefix is fixed **at build time**: the client bundle has it inlined. Set it
+for the build, and again when you start the server:
+
+```bash
+SCOTTY_BASE_PATH=/board npm run build
+SCOTTY_BASE_PATH=/board npm run start
+# Scotty is now at http://localhost:3000/board ; /api/... is no longer served at the root
+```
+
+Your proxy forwards the prefix unchanged (do not strip it) and should not
+buffer the server-sent-events stream. Remember `SCOTTY_ALLOWED_HOSTS` for the
+public hostname (see above).
+
+```nginx
+location /board/ {
+  proxy_pass http://127.0.0.1:3000;      # no trailing slash: keep /board in the path
+  proxy_set_header Host $host;
+  proxy_http_version 1.1;
+  proxy_buffering off;                   # /api/p/<id>/beads/stream is SSE
+}
+```
+
+```caddy
+example.com {
+  reverse_proxy /board/* 127.0.0.1:3000
+}
+```
+
+```bash
+# Tailscale Serve: --set-path keeps the prefix on the upstream URL
+tailscale serve --bg --set-path /board http://127.0.0.1:3000/board
+```
+
+Code that reuses `lib/api-client.ts` outside Scotty's own UI can point it at a
+different API prefix without editing the file: call `setApiRoot("/api/tracker")`
+at startup, or build with `NEXT_PUBLIC_SCOTTY_API_ROOT`. It defaults to the base
+path above.
+
 ### Docker
 
 ```bash
