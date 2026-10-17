@@ -24,7 +24,7 @@ import type { Bead } from "@/lib/schema";
  * Mission Control — "Needs You" decision inbox. Surfaces two kinds of items
  * waiting on a person:
  *   1. Beads an agent flagged for a decision (the `human` label, via `bd human`)
- *      — answered inline (comment + clear the flag) or dismissed.
+ *      — answered inline (comment, then close) or dismissed (close).
  *   2. Human-approval gates (`bd gate create --type human`) whose blockers are
  *      resolved — approved (closed, which unblocks dependents) from here so they
  *      don't sit invisibly waiting on the board (bead 8qc / gh-6).
@@ -234,7 +234,7 @@ function NeedsYouCard({ bead }: { bead: Bead }) {
         value={text}
         onChange={(e) => setText(e.target.value)}
         rows={2}
-        placeholder="Answer the agent's question… (posts a comment; the bead stays open)"
+        placeholder="Answer the agent's question… (posts a comment and closes the item)"
         className="mb-2 w-full resize-y rounded-[9px] border border-border bg-[var(--surface-2)] p-[9px_11px] text-[13px] leading-[1.5] text-[var(--text)] outline-none focus:border-[var(--brand)]"
       />
       <div className="flex items-center justify-end gap-2">

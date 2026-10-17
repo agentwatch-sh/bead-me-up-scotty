@@ -204,6 +204,14 @@ from the banner. This is a local viewing preference, not a permissions system.
 Project write requests are rejected by the server while the requesting browser
 is read-only; application settings remain available.
 
+### Respond and Dismiss in Needs You
+
+Respond and Dismiss close the item like `bd human respond` / `bd human dismiss`
+(close reasons `Responded` / `Dismissed`). The `human` label stays, so the
+record and `bd human stats` stay intact, and a work bead that depended on the
+question becomes ready. Set `SCOTTY_HUMAN_RESPOND=keep-open` to get the old
+behaviour (Respond comments and clears the label; the bead stays open).
+
 ### Storing the manual order in beads
 
 By default the Manual sort order stays in Scotty's own `config.json`, so only
