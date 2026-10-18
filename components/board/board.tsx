@@ -23,7 +23,7 @@ import { useOrder, useSetOrder } from "@/hooks/use-order";
 import { useBoardPrefs } from "@/hooks/use-board-prefs";
 import { useUrlFilters } from "@/hooks/use-url-filters";
 import { useUrlState } from "@/hooks/use-url-state";
-import { blockKind, childrenCountMap } from "@/lib/beads-view";
+import { blockKind, childrenCountMap, isItem } from "@/lib/beads-view";
 import { FilterBar } from "@/components/filter-bar";
 import { matchesFilters, labelOptionsFrom, assigneeOptionsFrom } from "@/lib/filters";
 import {
@@ -143,6 +143,8 @@ export function Board() {
   const matchFilters = React.useCallback(
     (b: Bead) => {
       if (b.issue_type === "epic") return false;
+      // Items for a person are not work: they never sit in a column (see isItem).
+      if (isItem(b)) return false;
       if (!showArchived && (b.labels ?? []).includes("archived")) return false;
       return matchesFilters(b, filters, humanAllowlist);
     },

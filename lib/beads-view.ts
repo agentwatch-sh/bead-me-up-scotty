@@ -25,6 +25,21 @@ export function isHumanGate(b: Bead): boolean {
   return b.issue_type === "gate" && b.await_type === "human";
 }
 
+/** Labels that make a bead an item for a person, not work (agentwatch's ITEM_LABELS). */
+export const ITEM_LABELS = ["question", "assumption", "blocker"];
+
+/**
+ * An item raised for a person (a question, an assumption or a blocker), not
+ * work: it carries one of ITEM_LABELS. The `human` label alone does not make an
+ * item; a work bead with `human` is still work. Items stay out of the board
+ * columns, Focus and Insights, and no drag can move them. They still decide
+ * where the work that depends on them goes (blockKind), and they stay in Needs
+ * You, the drawer, search and the List view.
+ */
+export function isItem(b: Bead): boolean {
+  return (b.labels ?? []).some((l) => ITEM_LABELS.includes(l));
+}
+
 /**
  * A human-approval gate that is unresolved and not itself blocked — its own
  * blockers (if any) are all closed, so a person can approve/resolve it now.

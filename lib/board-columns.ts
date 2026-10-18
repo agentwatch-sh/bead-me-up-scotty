@@ -1,5 +1,5 @@
 import type { Bead } from "./schema";
-import { blockKind, type BlockKind } from "./beads-view";
+import { blockKind, isItem, type BlockKind } from "./beads-view";
 
 /**
  * The board's column model — shared by the Board (Kanban) and List views so they
@@ -12,7 +12,8 @@ import { blockKind, type BlockKind } from "./beads-view";
  * steps. Blocked holds what waits on a person (an item in Needs You that can
  * be acted on now) and status blocked, before In Progress. Waiting's id stays
  * "backlog" (its old name), because saved orders and `scotty.rank` are keyed by
- * column id.
+ * column id. Items for a person (questions, assumptions, blockers; see isItem)
+ * are not work and sit in no column.
  */
 export interface BoardColumn {
   id: string;
@@ -37,8 +38,12 @@ export const BOARD_COLUMNS: BoardColumn[] = [
 
 export const COLUMN_ORDER: string[] = BOARD_COLUMNS.map((c) => c.id);
 
-/** Which board column a bead belongs to (first matching test), or null. */
+/**
+ * Which board column a bead belongs to (first matching test), or null. An item
+ * for a person (isItem) belongs to no column: it is not work.
+ */
 export function colOf(bead: Bead, index: Map<string, Bead>): string | null {
+  if (isItem(bead)) return null;
   const kind = blockKind(bead, index);
   for (const c of BOARD_COLUMNS) if (c.test(bead, kind)) return c.id;
   return null;

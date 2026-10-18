@@ -3,7 +3,7 @@ import * as React from "react";
 import { useApp } from "@/components/app-context";
 import { Icon, typeIconName } from "@/components/icons";
 import { PriorityChip } from "@/components/board/bead-card";
-import { isBlocked, blockingDeps, relTime, fmtDateTime, typeColor, catColor } from "@/lib/beads-view";
+import { isBlocked, isItem, blockingDeps, relTime, fmtDateTime, typeColor, catColor } from "@/lib/beads-view";
 import type { Bead } from "@/lib/schema";
 
 /**
@@ -77,8 +77,9 @@ export function FocusView() {
   const [showAllRecent, setShowAllRecent] = React.useState(false);
   const [lane, setLane] = React.useState<string | null>(null); // null = all, "" = unlabeled
 
+  // Work only: archived beads and items for a person (isItem) stay out.
   const active = React.useMemo(
-    () => beads.filter((b) => !(b.labels ?? []).includes(ARCHIVED)),
+    () => beads.filter((b) => !(b.labels ?? []).includes(ARCHIVED) && !isItem(b)),
     [beads],
   );
 

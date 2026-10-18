@@ -33,6 +33,8 @@ import {
   avatarColor,
   initials,
   isBlocked,
+  isItem,
+  ITEM_LABELS,
   parentOf,
   childrenCountMap,
   relTime,
@@ -46,6 +48,14 @@ import { type Bead } from "@/lib/schema";
  * either extreme — a judgement call, hence a named constant.
  */
 const DEFAULT_EPIC_PRIORITY = 2;
+
+/**
+ * Items for a person (questions, assumptions, blockers; see isItem) are not work,
+ * so they sit in no board column. The List still shows them, so they can be looked
+ * up, in a group of their own after the columns. They cannot be dragged.
+ */
+const ITEMS_GROUP = { id: "items", name: "Items for you", color: "var(--brand)" };
+const GROUP_ORDER = [...COLUMN_ORDER, ITEMS_GROUP.id];
 
 function rankOf(order: string[] | undefined, id: string): number {
   if (!order) return Number.POSITIVE_INFINITY;
@@ -72,11 +82,12 @@ export function ListView() {
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
-  // Which board column each bead belongs to (shared with the Board view).
+  // Which board column each bead belongs to (shared with the Board view); items
+  // go to the List's own items group.
   const colById = React.useMemo(() => {
     const m = new Map<string, string>();
     for (const b of beads) {
-      const c = colOf(b, index);
+      const c = isItem(b) ? ITEMS_GROUP.id : colOf(b, index);
       if (c) m.set(b.id, c);
     }
     return m;
@@ -91,8 +102,8 @@ export function ListView() {
         return matchesFilters(b, filters, humanAllowlist);
       })
       .sort((a, b) => {
-        const ca = COLUMN_ORDER.indexOf(colById.get(a.id) ?? "");
-        const cb = COLUMN_ORDER.indexOf(colById.get(b.id) ?? "");
+        const ca = GROUP_ORDER.indexOf(colById.get(a.id) ?? "");
+        const cb = GROUP_ORDER.indexOf(colById.get(b.id) ?? "");
         if (ca !== cb) return ca - cb;
         const col = colById.get(a.id);
         const order = col ? orders[col] : undefined;
@@ -130,6 +141,8 @@ export function ListView() {
     const activeCol = colById.get(activeId);
     const overCol = colById.get(overId);
     if (!activeCol || !overCol) return;
+    // Items are not work: they take no status from a drag and have no run-order.
+    if (activeCol === ITEMS_GROUP.id || overCol === ITEMS_GROUP.id) return;
 
     if (overCol === activeCol) {
       // Reorder within a column → write that column's shared order (Board sees it too).
@@ -195,7 +208,7 @@ export function ListView() {
                   const col = colById.get(b.id);
                   const prevCol = i > 0 ? colById.get(rows[i - 1].id) : undefined;
                   const showGroup = col && col !== prevCol;
-                  const meta = BOARD_COLUMNS.find((c) => c.id === col);
+                  const meta = col === ITEMS_GROUP.id ? ITEMS_GROUP : BOARD_COLUMNS.find((c) => c.id === col);
                   return (
                     <React.Fragment key={b.id}>
                       {showGroup && meta && (
@@ -214,6 +227,7 @@ export function ListView() {
                       )}
                       <Row
                         bead={b}
+                        item={col === ITEMS_GROUP.id}
                         blocked={isBlocked(b, index)}
                         onOpen={() => openDetail(b.id)}
                         parent={parentOf(b, index)}
@@ -236,6 +250,7 @@ export function ListView() {
 
 function Row({
   bead,
+  item,
   blocked,
   onOpen,
   parent,
@@ -245,6 +260,8 @@ function Row({
   humanAllowlist,
 }: {
   bead: Bead;
+  /** An item for a person, not work: marked, and not draggable. */
+  item: boolean;
   blocked: boolean;
   onOpen: () => void;
   parent: Bead | null;
@@ -256,10 +273,13 @@ function Row({
   const { readOnly, selectedBeadId, selectBead } = useApp();
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: bead.id,
-    disabled: readOnly,
+    disabled: readOnly || item,
   });
   const o = beadOrigin(bead, humanAllowlist);
-  const labels = (bead.labels ?? []).filter((l) => l !== "archived").slice(0, 2);
+  // An item shows its item label (question, assumption, blocker) as a chip at every
+  // width, so it reads as an item and not as work.
+  const itemLabel = item ? ITEM_LABELS.find((l) => (bead.labels ?? []).includes(l)) : undefined;
+  const labels = (bead.labels ?? []).filter((l) => l !== "archived" && l !== itemLabel).slice(0, 2);
   const openFromKeyboard = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (e.target !== e.currentTarget) return;
     if (e.key === "Enter" || e.key === " ") {
@@ -312,6 +332,15 @@ function Row({
       <span className="min-w-0 flex-1 truncate text-[13.5px] font-[550] text-[var(--text)]">
         {bead.title}
       </span>
+      {itemLabel && (
+        <span
+          data-item-chip
+          title="An item for you, not work"
+          className="flex-shrink-0 rounded-md bg-[var(--brand-weak)] px-[6px] py-px font-mono text-[10.5px] font-[550] text-[var(--brand)]"
+        >
+          {itemLabel}
+        </span>
+      )}
       {labels.map((l) => (
         <span
           key={l}

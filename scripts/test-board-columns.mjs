@@ -17,11 +17,13 @@ function load(name) {
   const code = ts.transpileModule(readFileSync(new URL(`../lib/${name}.ts`, import.meta.url), "utf8"), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
   }).outputText;
-  vm.runInNewContext(code, { exports, require: (id) => (id.startsWith("./") ? load(id.slice(2)) : nodeRequire(id)) });
+  // ("server-only" refuses to load outside Next; it has no exports to stand in for.)
+  vm.runInNewContext(code, { exports, require: (id) => (id === "server-only" ? {} : id.startsWith("./") ? load(id.slice(2)) : nodeRequire(id)) });
   return exports;
 }
-const { blockKind, isBlocked, makeIndex, needsHuman, readyHumanGate, waitsOnPerson } = load("beads-view");
+const { blockKind, isBlocked, isItem, makeIndex, needsHuman, readyHumanGate, waitsOnPerson } = load("beads-view");
 const { colOf, COLUMN_ORDER, BOARD_COLUMNS } = load("board-columns");
+const { computeInsights } = load("insights");
 
 const bead = (id, extra = {}) => ({
   id,
@@ -113,10 +115,26 @@ for (const item of index.values()) {
     assert.equal(isBlocked(item, index), false, `${item.id} is not itself blocked`);
   }
 }
-// The person-facing items themselves have no blockers, so they are ready; a gate
-// that waits on work sits in Waiting.
-assert.equal(colOf(index.get("question"), index), "ready");
+// A bead labelled question, assumption or blocker is an item for a person, not work:
+// it sits in no column, open, started or closed. `human` alone does not make an item.
+for (const id of ["question", "question-only", "assumption-only", "blocker-only", "human-in-progress", "question-closed", "question-deferred"]) {
+  assert.equal(isItem(index.get(id)), true, `${id} is an item`);
+  assert.equal(colOf(index.get(id), index), null, `${id} sits in no column`);
+}
+assert.equal(isItem(index.get("human")), false, "a bead with only `human` is work");
+assert.equal(colOf(index.get("human"), index), "ready", "and it sits in a column");
+// A gate (no item label) is not an item; one that waits on work sits in Waiting.
+assert.equal(isItem(index.get("gate-waits-work")), false);
 assert.equal(colOf(index.get("gate-waits-work"), index), "backlog");
+// Insights count work only: the column counts and the created counts leave items out.
+const all = [...index.values()];
+const work = all.filter((b) => !isItem(b));
+const insights = computeInsights(all, [], [], 30, Date.parse("2026-09-15T00:00:00Z"));
+const counted = Object.fromEntries(Array.from(insights.columns, (c) => [c.id, c.count]));
+const expectedCounts = Object.fromEntries(COLUMN_ORDER.map((id) => [id, work.filter((b) => colOf(b, index) === id).length]));
+assert.deepEqual({ ...counted }, expectedCounts, "Insights column counts cover work only");
+assert.equal(Array.from(insights.columns).reduce((n, c) => n + c.count, 0), work.length, "every work bead is counted once, no item is");
+assert.equal(Array.from(insights.createdClosed).reduce((n, d) => n + d.created, 0), work.length, "created counts leave items out");
 // Only the column changed: an open bead waiting on other work still counts as blocked.
 assert.equal(isBlocked(index.get("waits-work"), index), true, "isBlocked() is unchanged for work-waiting beads");
 assert.equal(isBlocked(index.get("waits-question"), index), true);
@@ -130,7 +148,9 @@ assert.ok(base, "Set SCOTTY_TEST_URL to an isolated demo server");
 
 const beads = [
   bead("upstream", { title: "Earlier plan step" }),
-  bead("question", { title: "Which region?", labels: ["human", "question"] }),
+  bead("question", { title: "Which region?", priority: 1, labels: ["human", "question"] }),
+  bead("old-question", { title: "Which colour?", status: "closed", closed_at: "2026-09-02T00:00:00Z", labels: ["human", "question"] }),
+  bead("ask-human", { title: "Work that a person does", labels: ["human"] }),
   bead("later-step", { title: "Later plan step", ...on("upstream") }),
   bead("needs-answer", { title: "Needs an answer", ...on("question") }),
   bead("free", { title: "Nothing in the way" }),
@@ -143,7 +163,7 @@ const expected = {
   parked: "backlog",
   free: "ready",
   upstream: "ready",
-  question: "ready",
+  "ask-human": "ready",
   "needs-answer": "blocked",
   busy: "in_progress",
   shipped: "done",
@@ -188,7 +208,21 @@ try {
   assert.deepEqual(await columnIds(), ["backlog", "ready", "blocked", "in_progress", "done"], "the board shows the columns in the new order");
   const titles = await page.locator("main [data-board-column] > div:first-child > span:nth-child(2)").allTextContents();
   assert.deepEqual(titles, ["Waiting", "Ready", "Blocked", "In Progress", "Done"], "the first column reads Waiting");
-  assert.deepEqual(await placement(), expected, "each card sits in the column its status and blockers choose");
+  assert.deepEqual(await placement(), expected, "each card sits in the column its status and blockers choose; items sit in none");
+  assert.equal(await card("question").count(), 0, "an open question with no blockers is in no column");
+  assert.equal(await card("old-question").count(), 0, "a closed question is not in Done");
+  // The counts cover work only.
+  await page.getByText("8 beads", { exact: false }).first().waitFor();
+  const counts = await page.locator("main [data-board-column] > div:first-child > span:nth-child(3)").allTextContents();
+  assert.deepEqual(counts, ["2", "3", "1", "1", "1"], "column counts leave items out");
+
+  // The task that waits on the question opens it from its "blocked by" row.
+  await card("needs-answer").click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByTitle("Open question", { exact: true }).click();
+  await dialog.getByText("Which region?", { exact: true }).first().waitFor();
+  await dialog.getByTitle("Close", { exact: true }).click();
+  await dialog.waitFor({ state: "detached" });
 
   // The header hints describe the new rules and stay on one line, like the other headers.
   const waitingHint = page.locator('[data-board-column="backlog"]').getByText("waits on work, or parked", { exact: true });
@@ -205,7 +239,17 @@ try {
   await page.getByRole("heading", { name: "List", exact: true }).waitFor();
   await card("shipped").waitFor();
   const groups = await page.locator("main span.uppercase").allTextContents();
-  assert.deepEqual(groups, ["Waiting", "Ready", "Blocked", "In Progress", "Done"], "list groups follow the column order");
+  assert.deepEqual(groups, ["Waiting", "Ready", "Blocked", "In Progress", "Done", "Items for you"], "list groups follow the column order; items come last, in their own group");
+  // The List still lists the questions, marked as items.
+  const itemRows = await page.locator("main [data-keyboard-bead-id]").evaluateAll((rows) =>
+    rows.filter((r) => r.querySelector("[data-item-chip]")).map((r) => [r.dataset.keyboardBeadId, r.querySelector("[data-item-chip]").textContent]));
+  assert.deepEqual(itemRows, [["question", "question"], ["old-question", "question"]], "the List lists the questions with an item chip");
+
+  // Focus shows no item as work: the open P1 question is not in Next up.
+  await page.goto(`${base}/p/demo?view=focus`);
+  await page.getByRole("heading", { name: "Focus", exact: true }).waitFor();
+  await card("needs-answer").waitFor();
+  assert.equal(await card("question").count(), 0, "Focus shows no item");
 
   // A drop keeps its meaning: into Waiting sets deferred, and the card then sits in Waiting.
   const unlock = await context.request.put(`${base}/api/viewer-mode`, { data: { readOnly: false } });
@@ -224,8 +268,22 @@ try {
   assert.deepEqual(writes, [{ id: "free", body: { status: "deferred" } }], "dropping into Waiting writes deferred");
   await page.locator('[data-board-column="backlog"] [data-keyboard-bead-id="free"]').waitFor();
 
+  // An item cannot be dragged anywhere, not even in the List: a drag of the
+  // question onto a work row writes nothing.
+  await page.goto(`${base}/p/demo?view=list`);
+  await card("question").waitFor();
+  const itemBox = await card("question").boundingBox();
+  const workBox = await card("upstream").boundingBox();
+  await page.mouse.move(itemBox.x + itemBox.width / 2, itemBox.y + itemBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(itemBox.x + itemBox.width / 2, itemBox.y + itemBox.height / 2 - 10, { steps: 2 });
+  await page.mouse.move(workBox.x + workBox.width / 2, workBox.y + workBox.height / 2, { steps: 12 });
+  await page.mouse.up();
+  await page.waitForTimeout(300);
+  assert.deepEqual(writes, [{ id: "free", body: { status: "deferred" } }], "dragging an item in the List writes nothing");
+
   assert.deepEqual(errors, []);
-  console.log("PASS: column order (Waiting, Ready, Blocked, In Progress, Done), work-waiting beads in Waiting, person-waiting beads in Blocked, started work stays In Progress, list order, header hints, and Waiting drops");
+  console.log("PASS: column order (Waiting, Ready, Blocked, In Progress, Done), work-waiting beads in Waiting, person-waiting beads in Blocked, started work stays In Progress, list order, header hints, and Waiting drops; items (question, assumption, blocker) sit in no column, Focus or count, and stay in the List and the drawer");
 } catch (error) {
   console.error({ writes, url: page?.url() });
   throw error;

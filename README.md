@@ -135,7 +135,12 @@ detail links, and read-only protections also work in the grouped layout.
   `human` item or a human gate that is not deferred and not itself blocked). A
   person item that is deferred or still blocked counts as other work, so its
   dependents wait in Waiting. **In Progress** keeps started work, even when it
-  gains a blocker. Dragging between columns runs `bd update --status` /
+  gains a blocker. A bead labelled `question`, `assumption` or `blocker` is an
+  **item** for a person, not work: it sits in no column (open or closed), and
+  Focus and Insights leave it out. It still decides where the work that
+  depends on it goes, and it stays in Needs You, the drawer, search and the
+  List view (in its own "Items for you" group, with an item chip). The `human`
+  label alone does not make an item. Dragging between columns runs `bd update --status` /
   `bd close`; the card then sits where these rules put it (a toast says so when
   that is another column). To park an open card that waits on work, use the
   status control in its drawer: it already sits in Waiting, so a drag there is

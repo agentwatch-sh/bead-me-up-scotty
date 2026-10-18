@@ -3,7 +3,7 @@ import type { Bead } from "./schema";
 import { originOf, type Origin } from "./attribution";
 import type { RawInteraction } from "./interactions";
 import { BOARD_COLUMNS, colOf } from "./board-columns";
-import { makeIndex } from "./beads-view";
+import { isItem, makeIndex } from "./beads-view";
 
 /**
  * Flow metrics for the Insights dashboard, derived from the bead list plus the
@@ -77,7 +77,11 @@ export function computeInsights(
   now: number,
 ): InsightsData {
   const start = now - days * DAY;
+  // The index keeps every bead, because items decide where the work that depends
+  // on them sits. The counts and metrics below cover work only: items for a person
+  // (isItem) are not work.
   const index = makeIndex(beads);
+  const work = beads.filter((b) => !isItem(b));
 
   // Day buckets across the range (oldest → newest).
   const buckets: string[] = [];
@@ -107,11 +111,11 @@ export function computeInsights(
   if (closeEvents.length > 0) {
     for (const ce of closeEvents) {
       const bead = index.get(ce.issueId);
-      if (!bead) continue;
+      if (!bead || isItem(bead)) continue;
       closes.push({ bead, at: ce.at, origin: originOf(ce.actor, humanAllowlist) });
     }
   } else {
-    for (const b of beads) {
+    for (const b of work) {
       const at = ms(b.closed_at);
       if (at === null) continue;
       closes.push({ bead: b, at, origin: originOf(b.assignee || b.created_by, humanAllowlist) });
@@ -132,7 +136,7 @@ export function computeInsights(
     if (ccp) ccp.closed++;
   }
   // Created counts.
-  for (const b of beads) {
+  for (const b of work) {
     const at = ms(b.created_at);
     if (at === null || at < start || at > now) continue;
     const ccp = cc.get(dayKey(at));
@@ -153,7 +157,7 @@ export function computeInsights(
 
   // Aging WIP: still in progress, time since work started.
   const aging: AgingItem[] = [];
-  for (const b of beads) {
+  for (const b of work) {
     if (b.status !== "in_progress" && b.status !== "hooked") continue;
     const startT =
       firstInProgress.get(b.id) ?? ms(b.started_at) ?? ms(b.updated_at) ?? ms(b.created_at);
@@ -169,7 +173,7 @@ export function computeInsights(
 
   // Column counts (current snapshot) for WIP limits.
   const counts = new Map(BOARD_COLUMNS.map((c) => [c.id, 0]));
-  for (const b of beads) {
+  for (const b of work) {
     const col = colOf(b, index);
     if (col) counts.set(col, (counts.get(col) ?? 0) + 1);
   }
