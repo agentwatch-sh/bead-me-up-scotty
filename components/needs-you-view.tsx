@@ -15,7 +15,7 @@ import {
   fmtDateTime,
 } from "@/lib/beads-view";
 import { reviewLinks } from "@/lib/review-links";
-import { api } from "@/lib/api-client";
+import { api, apiUrl } from "@/lib/api-client";
 import { DescriptionContent } from "@/components/description-content";
 import type { Bead } from "@/lib/schema";
 
@@ -100,7 +100,7 @@ function ReviewLinks({ bead }: { bead: Bead }) {
       <div data-review-links className="flex flex-wrap gap-[6px]">
         {links.map(link => {
           const attachment = link.startsWith("attachment://");
-          const href = attachment ? api.attachments.urlFor(projectId, link) : link;
+          const href = attachment ? api.attachments.urlFor(projectId, link) : link.startsWith("/") ? apiUrl(link) : link;
           const label = attachment || link.startsWith("/api/p/")
             ? `Attachment: ${link.split("/").at(-1)}` : link.replace(/^https?:\/\//i, "");
           return (

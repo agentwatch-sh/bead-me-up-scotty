@@ -30,6 +30,7 @@ import {
   useCreateGate,
 } from "@/hooks/use-beads";
 import { beadOrigin, originOf, originTitle } from "@/lib/attribution";
+import { withBasePath } from "@/lib/base-path";
 import {
   catColor,
   statusLabel,
@@ -225,7 +226,7 @@ function DrawerBody({
   const createGate = useCreateGate();
 
   const copyLink = () => {
-    const url = `${window.location.origin}/p/${encodeURIComponent(projectId)}?bead=${encodeURIComponent(bead.id)}`;
+    const url = `${window.location.origin}${withBasePath(`/p/${encodeURIComponent(projectId)}`)}?bead=${encodeURIComponent(bead.id)}`;
     if (!navigator.clipboard) {
       toast.error("Clipboard unavailable in this context");
       return;
