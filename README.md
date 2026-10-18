@@ -73,9 +73,10 @@ npm, Docker) are below.
   with dense cards showing id, type, priority, assignee, dep/comment counts, and an
   origin badge. Filter by type / priority / origin, full-text search, and a
   show/hide-archived toggle. Keyboard: `n` new, `/` search, `Esc` close.
-  A column with no cards (after filters and search) is hidden; while you drag a
-  card, every column it can be dropped into shows, and a board with no cards
-  shows all five.
+  A column with no cards (after filters and search) is hidden, and a board with
+  no cards shows all five. While you drag a card, a drop bar along the bottom of
+  the board offers the hidden columns it can be dropped into; the visible
+  columns stay where they are.
 - **Waiting ↔ Ready drag-and-drop** — drag cards between columns to change status
   (Waiting = `deferred`, Done = `bd close`); updates are optimistic.
 - **Create / edit** — add tasks and epics (type, priority, description, assignee,

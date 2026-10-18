@@ -31,6 +31,7 @@ import {
 } from "@/lib/board-columns";
 import { BeadCardOverlay } from "./bead-card";
 import { Column } from "./column";
+import { DropBar, columnOfDropBarId } from "./drop-bar";
 import type { Bead } from "@/lib/schema";
 
 // Whatever is under the pointer wins. pointerWithin sorts its hits by the average distance
@@ -38,10 +39,20 @@ import type { Bead } from "@/lib/schema";
 // contains it, and empty space low in a short column stays a valid target. closestCorners
 // alone can prefer a card in a long neighboring column whose corners sit nearer the
 // dragged card's. It remains the fallback when the pointer is between columns.
+// The drop bar overlays the bottom of the columns, so a bar target under the pointer
+// wins over the column and cards beneath it, and the fallback never picks the bar.
 const pointerFirstCollision: CollisionDetection = (args) => {
   const underPointer = pointerWithin(args);
-  return underPointer.length > 0 ? underPointer : closestCorners(args);
+  const onBar = underPointer.filter((hit) => columnOfDropBarId(String(hit.id)) !== undefined);
+  if (onBar.length > 0) return onBar;
+  if (underPointer.length > 0) return underPointer;
+  return closestCorners({
+    ...args,
+    droppableContainers: args.droppableContainers.filter((c) => columnOfDropBarId(String(c.id)) === undefined),
+  });
 };
+
+const BOARD_SCROLL = "bd-scroll min-h-0 flex-1 overflow-x-auto overflow-y-hidden p-[18px_22px]";
 
 export function Board() {
   const { beads, index, humanAllowlist, openCreate, loading, projectId, readOnly } = useApp();
@@ -85,16 +96,6 @@ export function Board() {
   // clipped by) its own column's list.
   const [draggingId, setDraggingId] = React.useState<string | null>(null);
   const [overColumnId, setOverColumnId] = React.useState<string | null>(null);
-  // The drag whose empty drop targets are on screen (see shownColumns). They
-  // appear one frame after the drag starts: dnd-kit measures the dragged card
-  // in place first, so the preview stays under the pointer even when a column
-  // appears to the left of the card and moves it.
-  const [revealedFor, setRevealedFor] = React.useState<string | null>(null);
-  React.useEffect(() => {
-    if (!draggingId) return;
-    const frame = requestAnimationFrame(() => setRevealedFor(draggingId));
-    return () => cancelAnimationFrame(frame);
-  }, [draggingId]);
 
   const matchFilters = React.useCallback(
     (b: Bead) => {
@@ -129,23 +130,26 @@ export function Board() {
   // Hide every column that shows no cards (after the filters, the search and the
   // Done window), so the board shows only where work is. Exceptions:
   // - no column has a card: show them all, so the board is never blank;
-  // - a card is being dragged: show every column it can be dropped into, so an
-  //   empty one is still a target (after the drop or a cancel they hide again);
   // - the user pinned the Blocked column to always show (bead mo3);
   // - a Done window is chosen: Done keeps its window control reachable.
   // Drag logic below still uses the full `columns` set; a hidden column has
   // zero cards, so nothing is ever dragged out of it.
-  const revealDropTargets = draggingId !== null && revealedFor === draggingId;
   const shownColumns = React.useMemo(() => {
     if (columns.every(({ cards }) => cards.length === 0)) return columns;
     return columns.filter(
       ({ col, cards }) =>
         cards.length > 0 ||
-        (revealDropTargets && col.droppable) ||
         (col.id === "blocked" && boardPrefs.blockedColumn === "always") ||
         (col.id === "done" && doneWindow !== null),
     );
-  }, [columns, revealDropTargets, boardPrefs.blockedColumn, doneWindow]);
+  }, [columns, boardPrefs.blockedColumn, doneWindow]);
+
+  // While a card is dragged, the hidden columns that take a drop are offered in the
+  // drop bar. They are not put back into the column row, so nothing on the board
+  // moves or resizes when a drag starts.
+  const barColumns = draggingId
+    ? COLUMNS.filter((c) => c.droppable && !shownColumns.some(({ col }) => col.id === c.id))
+    : [];
 
   // Which column each visible bead currently sits in (drag targets resolve here).
   const colOfBead = React.useMemo(() => {
@@ -154,16 +158,18 @@ export function Board() {
     return m;
   }, [columns]);
 
-  // `over` is a column id (pointer over empty column space) or a bead id (over a card).
+  // `over` is a column id (pointer over empty column space), a drop-bar target (a
+  // hidden column), or a bead id (over a card).
   function columnUnder(overId: string | null): string | undefined {
     if (!overId) return undefined;
+    const barColumn = columnOfDropBarId(overId);
+    if (barColumn) return barColumn;
     return COLUMNS.some((c) => c.id === overId) ? overId : colOfBead.get(overId);
   }
 
   function endDrag() {
     setDraggingId(null);
     setOverColumnId(null);
-    setRevealedFor(null);
   }
 
   function onDragStart(e: DragStartEvent) {
@@ -273,9 +279,13 @@ export function Board() {
         )}
       </header>
 
-      <div className="bd-scroll min-h-0 flex-1 overflow-x-auto overflow-y-hidden p-[18px_22px]">
+      {/* The drop bar is positioned against this wrapper, outside the horizontal
+          scroller, so it stays put while the columns scroll under it. */}
+      <div className="relative flex min-h-0 flex-1 flex-col">
         {loading && beads.length === 0 ? (
-          <div className="text-[13px] text-[var(--text-3)]">Loading beads…</div>
+          <div className={BOARD_SCROLL}>
+            <div className="text-[13px] text-[var(--text-3)]">Loading beads…</div>
+          </div>
         ) : (
           <DndContext
             sensors={sensors}
@@ -285,36 +295,39 @@ export function Board() {
             onDragEnd={onDragEnd}
             onDragCancel={endDrag}
           >
-            <div className="flex h-full min-h-0 gap-4">
-              {shownColumns.map(({ col, cards }) => (
-                <Column
-                  key={col.id}
-                  col={col}
-                  cards={cards}
-                  childCounts={childCounts}
-                  manualSort={boardPrefs.sortMode === "manual"}
-                  dropTarget={dropColumn?.id === col.id}
-                  control={
-                    col.id === "done" ? (
-                      <select
-                        value={doneWindow ?? ""}
-                        onChange={(e) =>
-                          setDoneWindow(e.target.value === "" ? null : Number(e.target.value))
-                        }
-                        title="Show only beads closed within this window"
-                        className="cursor-pointer rounded-[7px] border border-border bg-[var(--surface-2)] px-[7px] py-[3px] text-[11px] text-[var(--text-2)] outline-none"
-                      >
-                        <option value="">All time</option>
-                        <option value="7">Last 7 days</option>
-                        <option value="28">Last 4 weeks</option>
-                        <option value="90">Last 3 months</option>
-                        <option value="365">Last 12 months</option>
-                      </select>
-                    ) : undefined
-                  }
-                />
-              ))}
+            <div className={BOARD_SCROLL}>
+              <div className="flex h-full min-h-0 gap-4">
+                {shownColumns.map(({ col, cards }) => (
+                  <Column
+                    key={col.id}
+                    col={col}
+                    cards={cards}
+                    childCounts={childCounts}
+                    manualSort={boardPrefs.sortMode === "manual"}
+                    dropTarget={dropColumn?.id === col.id}
+                    control={
+                      col.id === "done" ? (
+                        <select
+                          value={doneWindow ?? ""}
+                          onChange={(e) =>
+                            setDoneWindow(e.target.value === "" ? null : Number(e.target.value))
+                          }
+                          title="Show only beads closed within this window"
+                          className="cursor-pointer rounded-[7px] border border-border bg-[var(--surface-2)] px-[7px] py-[3px] text-[11px] text-[var(--text-2)] outline-none"
+                        >
+                          <option value="">All time</option>
+                          <option value="7">Last 7 days</option>
+                          <option value="28">Last 4 weeks</option>
+                          <option value="90">Last 3 months</option>
+                          <option value="365">Last 12 months</option>
+                        </select>
+                      ) : undefined
+                    }
+                  />
+                ))}
+              </div>
             </div>
+            {barColumns.length > 0 && <DropBar columns={barColumns} dropTargetId={dropColumn?.id} />}
             {/* No drop animation: a cross-column drop has already moved the card, so
                 animating the preview toward its old slot would read as a failed move. */}
             <DragOverlay dropAnimation={null}>

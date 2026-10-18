@@ -72,8 +72,6 @@ try {
     await page.mouse.move(from.x, from.y);
     await page.mouse.down();
     await page.mouse.move(from.x + 8, from.y + 8, { steps: 2 });
-    // Empty columns appear a frame after the drag starts and can move the cards; aim after that.
-    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   };
   const hoverCard = async (id) => {
     const to = await center(card(id));
@@ -125,7 +123,9 @@ try {
   const emptySpaceWrites = writes.length;
   await pickUp("ready-peer");
   const zone = await column("In Progress").locator("article").first().locator("xpath=..").boundingBox();
-  await page.mouse.move(zone.x + zone.width / 2, zone.y + zone.height - 30, { steps: 12 });
+  // During a drag the drop bar for hidden columns covers the bottom of the board; aim just above it.
+  const barTop = (await page.locator("[data-drop-bar]").boundingBox())?.y ?? Number.POSITIVE_INFINITY;
+  await page.mouse.move(zone.x + zone.width / 2, Math.min(zone.y + zone.height, barTop) - 30, { steps: 12 });
   await page.waitForTimeout(150);
   assert.equal(await zoneHighlighted("In Progress"), true, "empty space low in another column is highlighted as the drop target");
   const emptySpaceStatus = page.waitForResponse((response) => response.url().endsWith("/beads/ready-peer/status") && response.request().method() === "POST");
