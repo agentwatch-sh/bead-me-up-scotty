@@ -9,7 +9,8 @@ import { blockKind, type BlockKind } from "./beads-view";
  *
  * Work that has not started sits on the left: Waiting holds parked (deferred)
  * beads and open beads that wait on other work, such as an agent's later plan
- * steps. Blocked holds what waits on a person, before In Progress. Its id stays
+ * steps. Blocked holds what waits on a person (an item in Needs You that can
+ * be acted on now) and status blocked, before In Progress. Waiting's id stays
  * "backlog" (its old name), because saved orders and `scotty.rank` are keyed by
  * column id.
  */
@@ -29,7 +30,7 @@ export interface BoardColumn {
 export const BOARD_COLUMNS: BoardColumn[] = [
   { id: "backlog", name: "Waiting", color: "#64748b", cmd: "waits on work, or parked", hint: "Not started: waits on other work, or parked (deferred)", droppable: true, status: "deferred", test: (b, kind) => b.status === "deferred" || (b.status === "open" && kind === "work") },
   { id: "ready", name: "Ready", color: "#3b82f6", cmd: "bd ready", droppable: true, status: "open", test: (b, kind) => b.status === "open" && kind === "none" },
-  { id: "blocked", name: "Blocked", color: "#ef4444", cmd: "waits on a person", hint: "Waits on a person (a human, question, assumption or blocker item, or a human gate), or has status blocked", droppable: false, test: (b, kind) => b.status === "blocked" || (b.status === "open" && kind === "gate") },
+  { id: "blocked", name: "Blocked", color: "#ef4444", cmd: "waits on a person", hint: "Waits on a person: an item in Needs You that you can act on now (not deferred, not itself blocked). Or the status is blocked.", droppable: false, test: (b, kind) => b.status === "blocked" || (b.status === "open" && kind === "gate") },
   { id: "in_progress", name: "In Progress", color: "#d97706", cmd: "in_progress", droppable: true, status: "in_progress", test: (b) => b.status === "in_progress" || b.status === "hooked" },
   { id: "done", name: "Done", color: "#16a34a", cmd: "closed", droppable: true, status: "closed", test: (b) => b.status === "closed" },
 ];

@@ -74,13 +74,13 @@ npm, Docker) are below.
   origin badge. Filter by type / priority / origin, full-text search, and a
   show/hide-archived toggle. Keyboard: `n` new, `/` search, `Esc` close.
   A column with no cards (after filters and search) is hidden, and a board with
-  no cards shows all five. While you drag a card, a drop bar along the bottom of
-  the board offers the hidden columns it can be dropped into; the visible
-  columns stay where they are.
+  no cards shows all five. While you drag a card, a drop bar over the column
+  names offers the hidden columns it can be dropped into; the visible columns
+  stay where they are, and the bar never covers a card.
 - **Waiting ↔ Ready drag-and-drop** — drag cards between columns to change status
   (Waiting = `deferred`, Done = `bd close`); updates are optimistic.
 - **Create / edit** — add tasks and epics (type, priority, description, assignee,
-  labels, parent epic, start-in-backlog) and edit status/priority inline.
+  labels, parent epic, start in Waiting) and edit status/priority inline.
 - **Epics & progress** — epics with live `closed ÷ children` progress bars and
   expandable child lists; add a child straight into an epic.
 - **Dependencies & graph** — view/add/remove typed dependencies in the detail
@@ -131,9 +131,15 @@ detail links, and read-only protections also work in the grouped layout.
   beads' built-in `deferred` status, and open beads that wait on other open
   work (an agent's later plan steps). **Ready** = open & unblocked.
   **Blocked** holds status `blocked`, and open beads that wait on a person: a
-  blocking dependency labelled `human`, `question`, `assumption` or `blocker`,
-  or a human gate. **In Progress** keeps started work, even when it gains a
-  blocker. Dragging between columns runs `bd update --status` / `bd close`.
+  blocking dependency that **Needs You** lists and that you can act on now (a
+  `human` item or a human gate that is not deferred and not itself blocked). A
+  person item that is deferred or still blocked counts as other work, so its
+  dependents wait in Waiting. **In Progress** keeps started work, even when it
+  gains a blocker. Dragging between columns runs `bd update --status` /
+  `bd close`; the card then sits where these rules put it (a toast says so when
+  that is another column). To park an open card that waits on work, use the
+  status control in its drawer: it already sits in Waiting, so a drag there is
+  a reorder.
 - beads has no human-vs-agent flag, so the UI stamps its own writes with a
   configured **human actor** (`BEADS_ACTOR`); anyone in the human allowlist renders
   as 👤, everyone else as 🤖. **Archive** = `bd close` + an `archived` label

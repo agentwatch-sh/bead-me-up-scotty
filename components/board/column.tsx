@@ -47,10 +47,13 @@ export function Column({
         </span>
         <span className="flex-1" />
         {control ?? <span title={col.hint} className="font-mono text-[10.5px] text-[var(--text-3)]">{col.cmd}</span>}
+        {/* The long rule text, for screen readers (a title is hover-only). */}
+        {col.hint && <span className="sr-only">{col.hint}</span>}
       </div>
 
       <div
         ref={setNodeRef}
+        data-board-column-body
         className={cn(
           "bd-scroll flex min-h-0 flex-1 flex-col gap-[10px] overflow-y-auto overflow-x-hidden rounded-xl p-[4px_4px_14px] transition-[background,outline]",
           dropTarget

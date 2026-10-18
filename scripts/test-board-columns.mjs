@@ -20,7 +20,7 @@ function load(name) {
   vm.runInNewContext(code, { exports, require: (id) => (id.startsWith("./") ? load(id.slice(2)) : nodeRequire(id)) });
   return exports;
 }
-const { blockKind, isBlocked, makeIndex } = load("beads-view");
+const { blockKind, isBlocked, makeIndex, needsHuman, readyHumanGate, waitsOnPerson } = load("beads-view");
 const { colOf, COLUMN_ORDER, BOARD_COLUMNS } = load("board-columns");
 
 const bead = (id, extra = {}) => ({
@@ -46,13 +46,25 @@ assert.deepEqual([...COLUMN_ORDER], ["backlog", "ready", "blocked", "in_progress
 assert.deepEqual(Array.from(BOARD_COLUMNS, (c) => c.name), ["Waiting", "Ready", "Blocked", "In Progress", "Done"]);
 assert.equal(BOARD_COLUMNS[0].status, "deferred", "a drop into Waiting still sets deferred");
 
+// "Waits on a person" matches the Needs You list: a dependency counts only when it is
+// an item that Needs You shows (a `human` item or a human gate) and that the person
+// can act on now (not deferred, not itself blocked). Anything else is other work.
 const items = [
   bead("task-open"),
+  bead("task-deferred", { status: "deferred" }),
+  bead("epic-open", { issue_type: "epic" }),
   bead("question", { labels: ["human", "question"] }),
-  bead("assumption", { labels: ["assumption"] }),
-  bead("blocker", { labels: ["blocker"] }),
   bead("human", { labels: ["human"] }),
+  bead("human-in-progress", { status: "in_progress", labels: ["human", "blocker"] }),
+  bead("question-only", { labels: ["question"] }),
+  bead("assumption-only", { labels: ["assumption"] }),
+  bead("blocker-only", { labels: ["blocker"] }),
+  bead("question-deferred", { status: "deferred", labels: ["human", "question"] }),
+  bead("question-status-blocked", { status: "blocked", labels: ["human", "question"] }),
+  bead("question-waits-work", { labels: ["human", "question"], ...on("task-open") }),
   bead("gate", { issue_type: "gate", await_type: "human" }),
+  bead("gate-waits-work", { issue_type: "gate", await_type: "human", ...on("task-open") }),
+  bead("gate-deferred", { issue_type: "gate", await_type: "human", status: "deferred" }),
   bead("question-closed", { status: "closed", labels: ["human", "question"] }),
   bead("epic-human", { issue_type: "epic", labels: ["human"] }),
 ];
@@ -61,12 +73,22 @@ const cases = [
   [bead("waits-work", on("task-open")), "work", "backlog"],
   [bead("waits-missing", on("not-in-index")), "work", "backlog"],
   [bead("waits-for-work", { dependencies: [dep("waits-for", "task-open")] }), "work", "backlog"],
+  [bead("waits-deferred-task", on("task-deferred")), "work", "backlog"],
+  [bead("waits-epic", on("epic-open")), "work", "backlog"],
   [bead("waits-question", on("question")), "gate", "blocked"],
-  [bead("waits-assumption", { dependencies: [dep("conditional-blocks", "assumption")] }), "gate", "blocked"],
-  [bead("waits-blocker", { dependencies: [dep("waits-for", "blocker")] }), "gate", "blocked"],
-  [bead("waits-human", on("human")), "gate", "blocked"],
+  [bead("waits-human", { dependencies: [dep("conditional-blocks", "human")] }), "gate", "blocked"],
+  [bead("waits-human-started", { dependencies: [dep("waits-for", "human-in-progress")] }), "gate", "blocked"],
   [bead("waits-gate", on("gate")), "gate", "blocked"],
   [bead("waits-both", on("task-open", "question")), "gate", "blocked"],
+  // Not in Needs You, or not actionable yet: other work.
+  [bead("waits-question-only", on("question-only")), "work", "backlog"],
+  [bead("waits-assumption-only", on("assumption-only")), "work", "backlog"],
+  [bead("waits-blocker-only", on("blocker-only")), "work", "backlog"],
+  [bead("waits-deferred-question", on("question-deferred")), "work", "backlog"],
+  [bead("waits-blocked-question", on("question-status-blocked")), "work", "backlog"],
+  [bead("waits-question-on-work", on("question-waits-work")), "work", "backlog"],
+  [bead("waits-gate-on-work", on("gate-waits-work")), "work", "backlog"],
+  [bead("waits-deferred-gate", on("gate-deferred")), "work", "backlog"],
   [bead("free"), "none", "ready"],
   [bead("answered", on("question-closed")), "none", "ready"],
   [bead("child-of-human", { dependencies: [dep("parent-child", "epic-human")] }), "none", "ready"],
@@ -83,11 +105,22 @@ for (const [b, kind, column] of cases) {
   assert.equal(blockKind(b, index), kind, `${b.id}: kind`);
   assert.equal(colOf(b, index), column, `${b.id}: column`);
 }
-// The person-facing items themselves have no blockers, so they are ready.
+// Every item that makes a task "wait on a person" is one that Needs You shows and
+// that is not blocked: Blocked always means "you can unblock this now".
+for (const item of index.values()) {
+  if (waitsOnPerson(item, index)) {
+    assert.ok(needsHuman(item) || readyHumanGate(item, index), `${item.id} is in Needs You`);
+    assert.equal(isBlocked(item, index), false, `${item.id} is not itself blocked`);
+  }
+}
+// The person-facing items themselves have no blockers, so they are ready; a gate
+// that waits on work sits in Waiting.
 assert.equal(colOf(index.get("question"), index), "ready");
+assert.equal(colOf(index.get("gate-waits-work"), index), "backlog");
 // Only the column changed: an open bead waiting on other work still counts as blocked.
 assert.equal(isBlocked(index.get("waits-work"), index), true, "isBlocked() is unchanged for work-waiting beads");
 assert.equal(isBlocked(index.get("waits-question"), index), true);
+assert.equal(isBlocked(index.get("waits-deferred-question"), index), true);
 assert.equal(isBlocked(index.get("free"), index), false);
 
 // ---- the board in a browser ----
@@ -161,7 +194,7 @@ try {
   const waitingHint = page.locator('[data-board-column="backlog"]').getByText("waits on work, or parked", { exact: true });
   const blockedHint = page.locator('[data-board-column="blocked"]').getByText("waits on a person", { exact: true });
   assert.match(await waitingHint.getAttribute("title"), /^Not started: waits on other work, or parked/, "the Waiting hint explains itself on hover");
-  assert.match(await blockedHint.getAttribute("title"), /question, assumption or blocker/, "the Blocked hint names the person-facing labels on hover");
+  assert.match(await blockedHint.getAttribute("title"), /item in Needs You that you can act on now/, "the Blocked hint names the Needs You rule on hover");
   // (Done is left out: its window control makes that header taller on its own.)
   const headerHeights = await page.locator("main [data-board-column]:not([data-board-column=done]) > div:first-child").evaluateAll((rows) => rows.map((r) => r.getBoundingClientRect().height));
   assert.equal(headerHeights.length, 4);
