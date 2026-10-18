@@ -6,6 +6,7 @@
 //   SCOTTY_BASE_PATH=/sub BEADS_DEMO=1 npx next start -p 3999 &
 //   SCOTTY_TEST_URL=http://127.0.0.1:3999 node scripts/test-base-path.mjs
 import assert from 'node:assert/strict';
+import http from 'node:http';
 import { chromium } from 'playwright';
 
 const base = process.env.SCOTTY_TEST_URL; assert.ok(base, 'Set SCOTTY_TEST_URL');
@@ -17,6 +18,20 @@ const bare = await fetch(`${origin}/api/projects`);
 assert.equal(bare.status, 404, 'GET /api/projects without the prefix must be 404');
 const prefixed = await fetch(`${origin}${prefix}/api/projects`);
 assert.equal(prefixed.status, 200, 'GET <prefix>/api/projects must work');
+
+// (f) The request guard (proxy.ts) covers everything under the prefix, the bare
+// prefix (the launcher) included. A forged Host and a cross-site write are
+// refused; the write carries an invalid body, so nothing could be written.
+const send = (method, path, headers, body) => new Promise((resolve, reject) => {
+  const { hostname, port } = new URL(origin);
+  const req = http.request({ host: hostname, port, method, path, headers, setHost: false }, res => { res.resume(); res.on('end', () => resolve(res.statusCode)); });
+  req.on('error', reject);
+  req.end(body);
+});
+for (const path of [prefix, `${prefix}/p/demo`, `${prefix}/api/projects`]) {
+  assert.equal(await send('GET', path, { Host: 'rebind.evil.example' }), 403, `${path} with a rebound Host`);
+}
+assert.equal(await send('POST', `${prefix}/api/projects`, { Host: new URL(origin).host, Origin: 'http://evil.example', 'Content-Type': 'text/plain' }, '{}'), 403, 'cross-site write under the prefix');
 
 const browser = await chromium.launch();
 try {
