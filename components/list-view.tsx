@@ -106,6 +106,12 @@ export function ListView() {
         const cb = GROUP_ORDER.indexOf(colById.get(b.id) ?? "");
         if (ca !== cb) return ca - cb;
         const col = colById.get(a.id);
+        // In the items group, open items come before closed ones.
+        if (col === ITEMS_GROUP.id) {
+          const da = a.status === "closed" ? 1 : 0;
+          const db = b.status === "closed" ? 1 : 0;
+          if (da !== db) return da - db;
+        }
         const order = col ? orders[col] : undefined;
         const ra = rankOf(order, a.id);
         const rb = rankOf(order, b.id);
@@ -132,6 +138,46 @@ export function ListView() {
     }
     return m;
   }, [rows, colById]);
+
+  // Closed items fold away under one row (local state, folded by default). The fold
+  // applies after the filters, so it counts only the closed items that pass them.
+  const [closedItemsOpen, setClosedItemsOpen] = React.useState(false);
+  const closedItemCount = React.useMemo(
+    () => rows.filter((b) => colById.get(b.id) === ITEMS_GROUP.id && b.status === "closed").length,
+    [rows, colById],
+  );
+  const shownRows = React.useMemo(
+    () =>
+      closedItemsOpen
+        ? rows
+        : rows.filter((b) => !(colById.get(b.id) === ITEMS_GROUP.id && b.status === "closed")),
+    [rows, colById, closedItemsOpen],
+  );
+  const groupHeader = (meta: { name: string; color: string }, count: number) => (
+    <div className="flex items-center gap-2 px-1 pb-px pt-3 first:pt-0">
+      <span className="h-[7px] w-[7px] rounded-[2px]" style={{ background: meta.color }} />
+      <span className="text-[11px] font-semibold uppercase tracking-[.04em] text-[var(--text-3)]">
+        {meta.name}
+      </span>
+      <span className="rounded-full border border-border bg-[var(--surface-2)] px-2 py-px font-mono text-[10.5px] text-[var(--text-3)]">
+        {count}
+      </span>
+    </div>
+  );
+  const closedItemsLabel = `${closedItemCount} closed ${closedItemCount === 1 ? "item" : "items"}`;
+  const closedItemsFold =
+    closedItemCount > 0 ? (
+      <button
+        type="button"
+        aria-expanded={closedItemsOpen}
+        data-closed-items-fold
+        onClick={() => setClosedItemsOpen((v) => !v)}
+        className="w-full rounded-[10px] border border-dashed border-border px-[13px] py-[7px] text-left text-[12px] text-[var(--text-3)] hover:border-[var(--border-strong)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]/30"
+      >
+        {closedItemsOpen ? `Hide ${closedItemsLabel}` : closedItemsLabel}
+      </button>
+    ) : null;
+  const hasOpenItems = rows.some((b) => colById.get(b.id) === ITEMS_GROUP.id && b.status !== "closed");
 
   function onDragEnd(e: DragEndEvent) {
     if (readOnly) return;
@@ -202,32 +248,24 @@ export function ListView() {
           </div>
         ) : (
           <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
-            <SortableContext items={rows.map((b) => b.id)} strategy={verticalListSortingStrategy}>
+            <SortableContext items={shownRows.map((b) => b.id)} strategy={verticalListSortingStrategy}>
               <div className="flex flex-col gap-[6px]">
-                {rows.map((b, i) => {
+                {shownRows.map((b, i) => {
                   const col = colById.get(b.id);
-                  const prevCol = i > 0 ? colById.get(rows[i - 1].id) : undefined;
+                  const prevCol = i > 0 ? colById.get(shownRows[i - 1].id) : undefined;
                   const showGroup = col && col !== prevCol;
                   const meta = col === ITEMS_GROUP.id ? ITEMS_GROUP : BOARD_COLUMNS.find((c) => c.id === col);
+                  const inItems = col === ITEMS_GROUP.id;
+                  const next = shownRows[i + 1];
+                  const lastOpenItem =
+                    inItems && b.status !== "closed" && !(next && colById.get(next.id) === ITEMS_GROUP.id && next.status !== "closed");
                   return (
                     <React.Fragment key={b.id}>
-                      {showGroup && meta && (
-                        <div className="flex items-center gap-2 px-1 pb-px pt-3 first:pt-0">
-                          <span
-                            className="h-[7px] w-[7px] rounded-[2px]"
-                            style={{ background: meta.color }}
-                          />
-                          <span className="text-[11px] font-semibold uppercase tracking-[.04em] text-[var(--text-3)]">
-                            {meta.name}
-                          </span>
-                          <span className="rounded-full border border-border bg-[var(--surface-2)] px-2 py-px font-mono text-[10.5px] text-[var(--text-3)]">
-                            {countByCol.get(col) ?? 0}
-                          </span>
-                        </div>
-                      )}
+                      {showGroup && meta && groupHeader(meta, countByCol.get(col) ?? 0)}
+                      {showGroup && inItems && !hasOpenItems && closedItemsFold}
                       <Row
                         bead={b}
-                        item={col === ITEMS_GROUP.id}
+                        item={inItems}
                         blocked={isBlocked(b, index)}
                         onOpen={() => openDetail(b.id)}
                         parent={parentOf(b, index)}
@@ -236,9 +274,16 @@ export function ListView() {
                         childCount={childCounts.get(b.id) ?? 0}
                         humanAllowlist={humanAllowlist}
                       />
+                      {lastOpenItem && closedItemsFold}
                     </React.Fragment>
                   );
                 })}
+                {!hasOpenItems && !closedItemsOpen && closedItemCount > 0 && (
+                  <>
+                    {groupHeader(ITEMS_GROUP, countByCol.get(ITEMS_GROUP.id) ?? 0)}
+                    {closedItemsFold}
+                  </>
+                )}
               </div>
             </SortableContext>
           </DndContext>

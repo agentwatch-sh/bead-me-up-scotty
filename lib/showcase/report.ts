@@ -1,7 +1,7 @@
 import "server-only";
 import type { Bead } from "../schema";
 import { beadOrigin } from "../attribution";
-import { statusLabel, childrenOf, initials, avatarColor } from "../beads-view";
+import { statusLabel, childrenOf, initials, avatarColor, isItem } from "../beads-view";
 
 /**
  * Delivery Report — a static, data-backed dashboard injected at the top of the
@@ -437,7 +437,9 @@ export function buildReport(opts: {
   asOf: string;
   now: number;
 }): string {
-  const { beads, allow, scope, asOf, now } = opts;
+  const { allow, scope, asOf, now } = opts;
+  // The report counts work only: questions, assumptions and blockers are items.
+  const beads = opts.beads.filter((b) => !isItem(b));
   const w = weeklySeries(beads, now);
   const hasTime = w.closed.some((v) => v > 0) || w.created.some((v) => v > 0);
   const where = scope === "all" ? "all projects" : "this project";

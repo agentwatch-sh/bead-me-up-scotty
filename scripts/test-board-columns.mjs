@@ -18,12 +18,13 @@ function load(name) {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
   }).outputText;
   // ("server-only" refuses to load outside Next; it has no exports to stand in for.)
-  vm.runInNewContext(code, { exports, require: (id) => (id === "server-only" ? {} : id.startsWith("./") ? load(id.slice(2)) : nodeRequire(id)) });
+  vm.runInNewContext(code, { exports, require: (id) => (id === "server-only" ? {} : id.startsWith("../") ? load(id.slice(3)) : id.startsWith("./") ? load(id.slice(2)) : nodeRequire(id)) });
   return exports;
 }
-const { blockKind, isBlocked, isItem, makeIndex, needsHuman, readyHumanGate, waitsOnPerson } = load("beads-view");
+const { blockKind, epicProgress, isBlocked, isItem, makeIndex, needsHuman, readyHumanGate, waitsOnPerson } = load("beads-view");
 const { colOf, COLUMN_ORDER, BOARD_COLUMNS } = load("board-columns");
 const { computeInsights } = load("insights");
+const { buildReport } = load("showcase/report");
 
 const bead = (id, extra = {}) => ({
   id,
@@ -141,6 +142,29 @@ assert.equal(isBlocked(index.get("waits-question"), index), true);
 assert.equal(isBlocked(index.get("waits-deferred-question"), index), true);
 assert.equal(isBlocked(index.get("free"), index), false);
 
+// Epic progress counts work only: a child that is an item is listed, not counted.
+const kidOf = (epic) => ({ dependencies: [dep("parent-child", epic)] });
+const progressIndex = makeIndex([
+  bead("prog-epic", { issue_type: "epic" }),
+  bead("prog-done", { status: "closed", ...kidOf("prog-epic") }),
+  bead("prog-open", kidOf("prog-epic")),
+  bead("prog-question", { status: "closed", labels: ["human", "question"], ...kidOf("prog-epic") }),
+]);
+assert.deepEqual({ ...epicProgress("prog-epic", [...progressIndex.values()]) }, { closed: 1, total: 2, pct: 50 }, "epic progress leaves items out");
+
+// The Publish report counts work only: the "Total beads" KPI and the footer.
+const reportOpts = { allow: [], title: "t", scope: "project", asOf: "2026-09-15", now: Date.parse("2026-09-15T00:00:00Z") };
+const reportOf = (list) => buildReport({ ...reportOpts, beads: list });
+const workOnly = [bead("r1"), bead("r2", { status: "closed", closed_at: "2026-09-10T00:00:00Z" }), bead("r3", { priority: 0 })];
+const withItems = [...workOnly, bead("rq", { labels: ["human", "question"] }), bead("rb", { status: "closed", closed_at: "2026-09-10T00:00:00Z", labels: ["blocker"] })];
+const totalKpi = (html) => html.match(/<span class="dr-kpi-l">Total beads<\/span>[\s\S]*?<span class="n">(\d+)<\/span>/)?.[1];
+const footerCount = (html) => html.match(/· (\d+) beads · read-only snapshot/)?.[1];
+const reportWork = reportOf(workOnly);
+const reportItems = reportOf(withItems);
+assert.equal(totalKpi(reportItems), "3", "the Total beads KPI counts work only");
+assert.equal(footerCount(reportItems), "3", "the footer counts work only");
+assert.equal(reportItems, reportWork, "items change nothing in the report");
+
 // ---- the board in a browser ----
 
 const base = process.env.SCOTTY_TEST_URL;
@@ -150,6 +174,8 @@ const beads = [
   bead("upstream", { title: "Earlier plan step" }),
   bead("question", { title: "Which region?", priority: 1, labels: ["human", "question"] }),
   bead("old-question", { title: "Which colour?", status: "closed", closed_at: "2026-09-02T00:00:00Z", labels: ["human", "question"] }),
+  bead("assumption", { title: "Assume UTC", priority: 3, labels: ["assumption"] }),
+  bead("old-blocker", { title: "Was blocked", status: "closed", closed_at: "2026-09-03T00:00:00Z", priority: 0, labels: ["blocker"] }),
   bead("ask-human", { title: "Work that a person does", labels: ["human"] }),
   bead("later-step", { title: "Later plan step", ...on("upstream") }),
   bead("needs-answer", { title: "Needs an answer", ...on("question") }),
@@ -240,10 +266,54 @@ try {
   await card("shipped").waitFor();
   const groups = await page.locator("main span.uppercase").allTextContents();
   assert.deepEqual(groups, ["Waiting", "Ready", "Blocked", "In Progress", "Done", "Items for you"], "list groups follow the column order; items come last, in their own group");
-  // The List still lists the questions, marked as items.
-  const itemRows = await page.locator("main [data-keyboard-bead-id]").evaluateAll((rows) =>
-    rows.filter((r) => r.querySelector("[data-item-chip]")).map((r) => [r.dataset.keyboardBeadId, r.querySelector("[data-item-chip]").textContent]));
-  assert.deepEqual(itemRows, [["question", "question"], ["old-question", "question"]], "the List lists the questions with an item chip");
+  // The List still lists the items, marked as items. Open ones come first; the closed
+  // ones are folded under one row until it is clicked.
+  const itemRows = () =>
+    page.locator("main [data-keyboard-bead-id]").evaluateAll((rows) =>
+      rows.filter((r) => r.querySelector("[data-item-chip]")).map((r) => [r.dataset.keyboardBeadId, r.querySelector("[data-item-chip]").textContent]));
+  const fold = page.locator("main [data-closed-items-fold]");
+  const itemsCount = () => page.locator("main span.uppercase", { hasText: "Items for you" }).locator("xpath=following-sibling::span[1]").textContent();
+  assert.deepEqual(await itemRows(), [["question", "question"], ["assumption", "assumption"]], "open items first; closed items are folded");
+  assert.equal(await fold.count(), 1);
+  assert.equal((await fold.textContent()).trim(), "2 closed items", "the fold row counts the closed items");
+  assert.equal(await fold.getAttribute("aria-expanded"), "false");
+  assert.equal(await itemsCount(), "4", "the group count covers open and closed items");
+  await fold.click();
+  assert.equal((await fold.textContent()).trim(), "Hide 2 closed items");
+  assert.equal(await fold.getAttribute("aria-expanded"), "true");
+  assert.deepEqual(await itemRows(), [["question", "question"], ["assumption", "assumption"], ["old-blocker", "blocker"], ["old-question", "question"]], "closed items show under the fold row, by priority");
+  const order = await page.locator("main [data-keyboard-bead-id], main [data-closed-items-fold]").evaluateAll((els) => els.slice(-5).map((e) => e.dataset.keyboardBeadId ?? "fold"));
+  assert.deepEqual(order, ["question", "assumption", "fold", "old-blocker", "old-question"], "the fold row sits between the open and the closed items");
+  await fold.click();
+  assert.equal((await fold.textContent()).trim(), "2 closed items", "a second click folds them again");
+  assert.deepEqual(await itemRows(), [["question", "question"], ["assumption", "assumption"]]);
+  // The fold works from the keyboard.
+  await fold.focus();
+  await page.keyboard.press("Enter");
+  assert.equal(await fold.getAttribute("aria-expanded"), "true", "Enter unfolds");
+  await page.keyboard.press("Space");
+  assert.equal(await fold.getAttribute("aria-expanded"), "false", "Space folds");
+  // The fold counts only the closed items that pass the filters; one is "1 closed item".
+  await page.goto(`${base}/p/demo?view=list&q=colour`);
+  await page.getByRole("heading", { name: "List", exact: true }).waitFor();
+  await fold.waitFor();
+  assert.equal((await fold.textContent()).trim(), "1 closed item", "singular for one closed item");
+  await page.goto(`${base}/p/demo?view=list&q=region`);
+  await page.getByRole("heading", { name: "List", exact: true }).waitFor();
+  await card("question").waitFor();
+  assert.equal(await fold.count(), 0, "a search that removes every closed item shows no fold row");
+  // No closed items: no fold row. Only closed items: just the fold row.
+  const held = beads.splice(0, beads.length, ...beads.filter((b) => !(b.status === "closed" && b.labels.includes("blocker")) && b.id !== "old-question"));
+  await page.goto(`${base}/p/demo?view=list`);
+  await card("question").waitFor();
+  assert.equal(await fold.count(), 0, "a store with no closed items shows no fold row");
+  beads.splice(0, beads.length, ...held.filter((b) => !(b.labels ?? []).some((l) => l === "assumption" || l === "question") || b.status === "closed"));
+  await page.goto(`${base}/p/demo?view=list`);
+  await card("free").waitFor();
+  assert.equal(await fold.count(), 1, "with only closed items the fold row shows alone");
+  assert.equal(await page.locator("main span.uppercase", { hasText: "Items for you" }).count(), 1, "under its group header");
+  assert.deepEqual(await itemRows(), [], "and no item row");
+  beads.splice(0, beads.length, ...held);
 
   // Focus shows no item as work: the open P1 question is not in Next up.
   await page.goto(`${base}/p/demo?view=focus`);

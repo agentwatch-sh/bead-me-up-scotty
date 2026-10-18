@@ -282,7 +282,8 @@ export function epicProgress(
   epicId: string,
   beads: Bead[],
 ): { closed: number; total: number; pct: number } {
-  const kids = childrenOf(epicId, beads);
+  // Progress counts work only: a child that is an item for a person is not work.
+  const kids = childrenOf(epicId, beads).filter((k) => !isItem(k));
   const total = kids.length;
   const closed = kids.filter((k) => k.status === "closed").length;
   return { closed, total, pct: total ? Math.round((closed / total) * 100) : 0 };
