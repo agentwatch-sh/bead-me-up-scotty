@@ -85,6 +85,16 @@ export function Board() {
   // clipped by) its own column's list.
   const [draggingId, setDraggingId] = React.useState<string | null>(null);
   const [overColumnId, setOverColumnId] = React.useState<string | null>(null);
+  // The drag whose empty drop targets are on screen (see shownColumns). They
+  // appear one frame after the drag starts: dnd-kit measures the dragged card
+  // in place first, so the preview stays under the pointer even when a column
+  // appears to the left of the card and moves it.
+  const [revealedFor, setRevealedFor] = React.useState<string | null>(null);
+  React.useEffect(() => {
+    if (!draggingId) return;
+    const frame = requestAnimationFrame(() => setRevealedFor(draggingId));
+    return () => cancelAnimationFrame(frame);
+  }, [draggingId]);
 
   const matchFilters = React.useCallback(
     (b: Bead) => {
@@ -116,17 +126,26 @@ export function Board() {
     [visible, index, orders, boardPrefs.sortMode, doneWindow, now],
   );
 
-  // Hide the Blocked column when it's empty, unless the user pinned it to always
-  // show (bead mo3). Drag logic below still uses the full `columns` set; a hidden
-  // Blocked column has zero cards, so nothing is ever dropped into or out of it.
-  const shownColumns = React.useMemo(
-    () =>
-      columns.filter(
-        ({ col, cards }) =>
-          col.id !== "blocked" || cards.length > 0 || boardPrefs.blockedColumn === "always",
-      ),
-    [columns, boardPrefs.blockedColumn],
-  );
+  // Hide every column that shows no cards (after the filters, the search and the
+  // Done window), so the board shows only where work is. Exceptions:
+  // - no column has a card: show them all, so the board is never blank;
+  // - a card is being dragged: show every column it can be dropped into, so an
+  //   empty one is still a target (after the drop or a cancel they hide again);
+  // - the user pinned the Blocked column to always show (bead mo3);
+  // - a Done window is chosen: Done keeps its window control reachable.
+  // Drag logic below still uses the full `columns` set; a hidden column has
+  // zero cards, so nothing is ever dragged out of it.
+  const revealDropTargets = draggingId !== null && revealedFor === draggingId;
+  const shownColumns = React.useMemo(() => {
+    if (columns.every(({ cards }) => cards.length === 0)) return columns;
+    return columns.filter(
+      ({ col, cards }) =>
+        cards.length > 0 ||
+        (revealDropTargets && col.droppable) ||
+        (col.id === "blocked" && boardPrefs.blockedColumn === "always") ||
+        (col.id === "done" && doneWindow !== null),
+    );
+  }, [columns, revealDropTargets, boardPrefs.blockedColumn, doneWindow]);
 
   // Which column each visible bead currently sits in (drag targets resolve here).
   const colOfBead = React.useMemo(() => {
@@ -144,6 +163,7 @@ export function Board() {
   function endDrag() {
     setDraggingId(null);
     setOverColumnId(null);
+    setRevealedFor(null);
   }
 
   function onDragStart(e: DragStartEvent) {

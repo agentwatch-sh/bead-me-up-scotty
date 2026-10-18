@@ -72,6 +72,8 @@ try {
     await page.mouse.move(from.x, from.y);
     await page.mouse.down();
     await page.mouse.move(from.x + 8, from.y + 8, { steps: 2 });
+    // Empty columns appear a frame after the drag starts and can move the cards; aim after that.
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   };
   const hoverCard = async (id) => {
     const to = await center(card(id));

@@ -76,11 +76,15 @@ try {
     await source.scrollIntoViewIfNeeded();
     await target.scrollIntoViewIfNeeded();
     const from = await source.boundingBox();
-    const to = await target.boundingBox();
-    assert.ok(from && to, `drag targets must be visible: ${sourceId} → ${targetId}`);
+    assert.ok(from, `drag source must be visible: ${sourceId}`);
     await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
     await page.mouse.down();
     await page.mouse.move(from.x + from.width / 2 + 8, from.y + from.height / 2 + 8, { steps: 2 });
+    // Aim once the drag has started: empty columns stay hidden until then (they appear a
+    // frame later), so the columns can move.
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const to = await target.boundingBox();
+    assert.ok(to, `drag target must be visible: ${sourceId} → ${targetId}`);
     await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, { steps: 12 });
     await page.mouse.up();
   };
