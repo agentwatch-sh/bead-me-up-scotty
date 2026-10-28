@@ -214,7 +214,7 @@ instead. Agents and other bd clients then see the order in `bd list --json` and
 `bd ready --json`. bd's own sort ignores it, so sort by it yourself:
 
 ```bash
-bd ready --json | jq 'sort_by(.metadata["scotty.rank"] // infinite)'
+bd ready --json | jq 'sort_by(.metadata["scotty.rank"] | tonumber? // infinite)'
 ```
 
 Ranks are sparse. New ranks are 1024 apart, and a card dropped between two

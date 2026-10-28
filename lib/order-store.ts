@@ -44,20 +44,36 @@ function withProjectLock<T>(projectId: string, fn: () => Promise<T>): Promise<T>
   return next;
 }
 
-/** Each column's ranked beads, lowest rank first. Unranked beads are left out. */
+/** How the Board orders unranked cards: by priority, then in list order. */
+function fallbackOf(beads: Bead[]): (id: string) => number {
+  const at = new Map(beads.map((b, i) => [b.id, b.priority * beads.length + i]));
+  return (id) => at.get(id) ?? Number.POSITIVE_INFINITY;
+}
+
+/**
+ * The order of each column that holds a rank: its ranked beads, lowest rank
+ * first, then its unranked beads in the Board's fallback order. The list is
+ * complete, so the Board and the List view, which break ties differently,
+ * show the same order. A column with no rank is left out.
+ */
 function deriveOrders(beads: Bead[]): Record<string, string[]> {
   const index = new Map(beads.map((b) => [b.id, b]));
-  const byColumn = new Map<string, { id: string; rank: number }[]>();
+  const fallback = fallbackOf(beads);
+  const byColumn = new Map<string, { id: string; rank: number | null }[]>();
   for (const bead of beads) {
-    const rank = rankOf(bead);
-    if (rank === null) continue;
     const col = colOf(bead, index);
     if (!col) continue;
-    byColumn.set(col, [...(byColumn.get(col) ?? []), { id: bead.id, rank }]);
+    byColumn.set(col, [...(byColumn.get(col) ?? []), { id: bead.id, rank: rankOf(bead) }]);
   }
   const orders: Record<string, string[]> = {};
   for (const [col, items] of byColumn) {
-    items.sort((a, b) => a.rank - b.rank || a.id.localeCompare(b.id));
+    if (!items.some((i) => i.rank !== null)) continue;
+    items.sort((a, b) => {
+      if (a.rank !== null && b.rank !== null) return a.rank - b.rank || a.id.localeCompare(b.id);
+      if (a.rank !== null) return -1;
+      if (b.rank !== null) return 1;
+      return fallback(a.id) - fallback(b.id);
+    });
     orders[col] = items.map((i) => i.id);
   }
   return orders;
@@ -149,14 +165,14 @@ export async function setColumnOrder(
   return withProjectLock(projectId, async () => {
     // Read the beads only now that the lock is held, so the plan is current.
     const beads = await copyLocalOrder(projectId, store, actor);
-    const index = new Map(beads.map((b, i) => [b.id, { bead: b, at: i }]));
-    const known = ids.filter((id) => index.has(id));
-    // The board shows unranked cards by priority, then in list order.
-    const fallback = (id: string) => {
-      const e = index.get(id)!;
-      return e.bead.priority * beads.length + e.at;
-    };
-    const ranks = planRanks(known, (id) => rankOf(index.get(id)?.bead), fallback);
+    const index = new Map(beads.map((b) => [b.id, b]));
+    // Only the beads that are in this column now: one that moved to another
+    // column since the Board drew it must not take a rank from this one.
+    const inColumn = ids.filter((id) => {
+      const bead = index.get(id);
+      return bead !== undefined && colOf(bead, index) === columnId;
+    });
+    const ranks = planRanks(inColumn, (id) => rankOf(index.get(id)), fallbackOf(beads));
     if (!ranks.size) return boardOrders(projectId, beads);
     await writeRanks(store, ranks, actor);
     return boardOrders(projectId, await store.list());

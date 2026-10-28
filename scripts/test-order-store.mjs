@@ -161,6 +161,8 @@ function api(root) {
   const all = await beadsOf(pid);
   const ready = all.filter((b) => b.status === "open" && !(b.dependencies ?? []).length).map((b) => b.id);
   assert.ok(ready.length >= 4, "demo data needs four unblocked open beads");
+  const started = all.filter((b) => b.status === "in_progress" || b.status === "hooked").map((b) => b.id);
+  assert.ok(started.length >= 2, "demo data needs two started beads");
 
   // Rank the column: the first card to the bottom leaves only that card unranked.
   // Then move one card: one bead written, with a rank from the gap.
@@ -185,6 +187,19 @@ function api(root) {
   await putOrder(pid, "ready", moved);
   await orderOf(pid);
   assert.deepEqual(await written(pid, before), [], "an unchanged order and a GET write nothing");
+
+  // The order of a ranked column lists all of its cards, the unranked last, so the
+  // Board and the List view (which break ties differently) agree.
+  const listed = (await orderOf(pid)).ready;
+  assert.ok(ready.every((id) => listed.includes(id)), "a ranked column's order lists its unranked cards too");
+  assert.deepEqual(listed.filter((id) => ready.includes(id)), moved);
+
+  // A card that is in another column takes no rank from this one.
+  before = await stamp(pid);
+  await tick();
+  await putOrder(pid, "ready", [started[0], ...moved]);
+  assert.deepEqual(await written(pid, before), [], "a card from another column is not written");
+  assert.ok(!(await orderOf(pid)).ready.includes(started[0]));
 
   // The request guard and read-only mode refuse order writes.
   const other = [x2, ...moved.filter((id) => id !== x2)];
@@ -225,8 +240,6 @@ function api(root) {
   // An unranked column gets the saved order copied once, when the setting flips on
   // in a writable request. In read-only mode the board shows the saved order and
   // the first order write copies it.
-  const started = all.filter((b) => b.status === "in_progress" || b.status === "hooked").map((b) => b.id);
-  assert.ok(started.length >= 2, "demo data needs two started beads");
   const saved = [...started].reverse();
   await setStore("local");
   await putOrder(pid, "in_progress", saved);
