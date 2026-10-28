@@ -236,13 +236,15 @@ assets, API, live-update stream, notification links and copied permalinks all
 move under it. Unset (the default) changes nothing.
 
 Next reads the setting when it builds and again when it starts, and the client
-bundle has it inlined, so set it for both. That includes every launch through
-`scotty`. A Homebrew install is built without the setting, so it serves at the
-root; for a sub-path, build Scotty yourself as below.
+bundle has it inlined, so set it for both. The `scotty` command reads it too: it
+waits for the server, adds the current folder's project and opens the browser
+under the sub-path, and it refuses to start when the setting differs from the
+one the build was made with. A Homebrew install is built without the setting, so
+it serves at the root; for a sub-path, build Scotty yourself as below.
 
 ```bash
 SCOTTY_BASE_PATH=/board npm run build
-SCOTTY_BASE_PATH=/board npm run start
+SCOTTY_BASE_PATH=/board npm run start   # or, after `npm link`: SCOTTY_BASE_PATH=/board scotty
 # Scotty is now at http://localhost:3000/board ; /api/... is no longer served at the root
 ```
 
