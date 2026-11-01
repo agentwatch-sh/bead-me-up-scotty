@@ -1,0 +1,18 @@
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+const base = process.env.SCOTTY_TEST_URL;
+const repo = process.env.SCOTTY_CHOICES_REPO;
+assert.ok(base && repo, "Use an isolated server and disposable bd repository");
+const bd = (...args) => JSON.parse(execFileSync(process.env.SCOTTY_TEST_BD || "bd", args, { cwd: repo, encoding: "utf8" }));
+const id = bd("create", "Which theme?", "--type", "task", "--labels", "human,question", "--json").id;
+const post = (text) => fetch(`${base}/api/p/choices/beads/${id}/human`, { method: "POST", headers: { "content-type": "application/json", origin: new URL(base).origin }, body: JSON.stringify({ action: "decline", text }) });
+assert.equal((await post(" ")).status, 400, "decline requires a reason");
+assert.equal(bd("comments", id, "--json").length, 0);
+const response = await post("The premise is wrong.");
+assert.equal(response.status, 200, await response.text());
+assert.equal(bd("show", id, "--json")[0].close_reason, "Declined");
+const comment = bd("comments", id, "--json").at(-1);
+assert.match(comment.text, /^The person declined this question: The premise is wrong\./);
+assert.equal(comment.author, "human:selden");
+assert.equal((await post("Again.")).status, 409, "decline cannot answer a closed question again");
+console.log("PASS human decline API: required reason, canonical comment, actor, close reason");

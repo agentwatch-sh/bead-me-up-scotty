@@ -509,3 +509,40 @@ team and me decide where to focus our time, and encourages us to keep adding
 updates and making it better. I truly appreciate everyone who shares feedback,
 including through this small usage signal. Seeing that something we've built
 is useful to you is inspiring. Thank you for being part of it.
+
+
+### Choices in Needs You
+
+Agents can store choices in vanilla bd metadata under `scotty.choices`.
+The inbox and item detail show one button per option, with the recommended option first.
+Free-text replies remain available. Dismiss selects the recommended option.
+Decline question requires a reason and closes the item as Declined.
+Its comment explicitly records that the person declines the question; it selects no option.
+Set `multiSelect` to true to select several options before pressing Respond.
+A written answer takes precedence over selected options; clear it to submit the selections.
+
+```json
+{
+  "scotty.choices": {
+    "version": 1,
+    "multiSelect": false,
+    "options": [
+      {"id":"blue","label":"Use blue","description":"Keep the existing theme.","recommended":true},
+      {"id":"green","label":"Use green","description":"Create a new theme.","recommended":false}
+    ]
+  }
+}
+```
+
+Save this JSON in a file. Apply it with `bd update ITEM --metadata @choices.json`.
+Use two to four unique option IDs, with exactly one recommendation.
+Labels have at most 80 characters; descriptions have at most 240 characters.
+The definition has an 8 KiB limit. Invalid definitions retain the ordinary reply controls.
+The human route validates submitted snapshots against the current options before writing a comment.
+Comments preserve the selected labels and descriptions in canonical fenced JSON.
+Older builds ignore the metadata and retain free-text replies and Dismiss.
+
+Run `node scripts/test-human-choices.mjs` for the pure contract tests (Node 22.18+).
+The API and UI scripts require `SCOTTY_TEST_URL`, `SCOTTY_CHOICES_REPO`, and an isolated disposable board.
+Use `SCOTTY_TEST_BD` to select bd and `SCOTTY_BROWSER_EXECUTABLE` to select a headless browser.
+Run `node scripts/test-human-choices-api.mjs`, `node scripts/test-human-decline-api.mjs`, and `node scripts/test-human-choices-ui.mjs` on those fixtures.

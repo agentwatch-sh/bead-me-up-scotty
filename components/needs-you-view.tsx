@@ -2,7 +2,7 @@
 import * as React from "react";
 import { GateApproval } from "@/components/gate-approval";
 import { useApp } from "@/components/app-context";
-import { useRespondHuman, useDismissHuman } from "@/hooks/use-beads";
+import { HumanAnswer } from "@/components/human-answer";
 import { Icon, typeIconName } from "@/components/icons";
 import { OriginBadge } from "@/components/board/bead-card";
 import { beadOrigin } from "@/lib/attribution";
@@ -187,12 +187,8 @@ function GateCard({ gate }: { gate: Bead }) {
 }
 
 function NeedsYouCard({ bead }: { bead: Bead }) {
-  const { humanAllowlist, openDetail, readOnly, selectedBeadId, selectBead } = useApp();
-  const respond = useRespondHuman();
-  const dismiss = useDismissHuman();
-  const [text, setText] = React.useState("");
+  const { humanAllowlist, openDetail, selectedBeadId, selectBead } = useApp();
   const o = beadOrigin(bead, humanAllowlist);
-  const busy = respond.isPending || dismiss.isPending;
 
   return (
     <div
@@ -229,31 +225,7 @@ function NeedsYouCard({ bead }: { bead: Bead }) {
       </button>
       <CardDescription bead={bead} />
       <ReviewLinks bead={bead} />
-      <textarea
-        disabled={readOnly}
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        rows={2}
-        placeholder="Answer the agent's question… (posts a comment and closes the item)"
-        className="mb-2 w-full resize-y rounded-[9px] border border-border bg-[var(--surface-2)] p-[9px_11px] text-[13px] leading-[1.5] text-[var(--text)] outline-none focus:border-[var(--brand)]"
-      />
-      <div className="flex items-center justify-end gap-2">
-        <button
-          disabled={readOnly || busy}
-          onClick={() => dismiss.mutate({ id: bead.id })}
-          className="h-8 rounded-lg border border-border bg-[var(--surface-2)] px-3 text-[12.5px] font-[550] text-[var(--text-2)] hover:bg-[var(--surface-3)] disabled:opacity-50"
-        >
-          Dismiss
-        </button>
-        <button
-          disabled={readOnly || busy || !text.trim()}
-          onClick={() => respond.mutate({ id: bead.id, text: text.trim() })}
-          className="flex h-8 items-center gap-[6px] rounded-lg px-3 text-[12.5px] font-[550] text-white disabled:opacity-50"
-          style={{ background: "var(--brand)" }}
-        >
-          <Icon name="check" size={14} /> Respond
-        </button>
-      </div>
+      <HumanAnswer bead={bead} />
     </div>
   );
 }

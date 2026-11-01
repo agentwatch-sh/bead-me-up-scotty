@@ -7,6 +7,7 @@ import {
 import { toast } from "sonner";
 import { toastError } from "@/components/error-toast";
 import { api, type BeadsResponse } from "@/lib/api-client";
+import type { HumanChoice } from "@/lib/human-choices";
 import type { Bead, CreateInput, UpdateInput, DepType } from "@/lib/schema";
 import { useApp } from "@/components/app-context";
 
@@ -192,14 +193,27 @@ export function useCreateGate() {
   );
 }
 
-/** "Needs You" inbox: respond (comment + close) or dismiss (drop the human label). */
+/** "Needs You" inbox: respond or dismiss, optionally with an immutable choice snapshot. */
 export function useRespondHuman() {
   const { projectId } = useApp();
   const qc = useQueryClient();
   return useMutation(
-    mutationToast<{ id: string; text: string }, Bead>(
-      ({ id, text }) => api.human.respond(projectId, id, text),
+    mutationToast<{ id: string; text: string; choice?: HumanChoice; choices?: HumanChoice[] }, Bead>(
+      ({ id, text, choice, choices }) => api.human.respond(projectId, id, text, choice, choices),
       (a) => `Responded to ${a.id}`,
+      qc,
+      beadsKey(projectId),
+    ),
+  );
+}
+
+export function useDeclineHuman() {
+  const { projectId } = useApp();
+  const qc = useQueryClient();
+  return useMutation(
+    mutationToast<{ id: string; text: string }, Bead>(
+      ({ id, text }) => api.human.decline(projectId, id, text),
+      (a) => `Declined ${a.id}`,
       qc,
       beadsKey(projectId),
     ),
@@ -210,8 +224,8 @@ export function useDismissHuman() {
   const { projectId } = useApp();
   const qc = useQueryClient();
   return useMutation(
-    mutationToast<{ id: string }, Bead>(
-      ({ id }) => api.human.dismiss(projectId, id),
+    mutationToast<{ id: string; choice?: HumanChoice }, Bead>(
+      ({ id, choice }) => api.human.dismiss(projectId, id, choice),
       (a) => `Dismissed ${a.id}`,
       qc,
       beadsKey(projectId),

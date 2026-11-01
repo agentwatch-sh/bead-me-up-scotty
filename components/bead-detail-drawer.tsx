@@ -1,5 +1,6 @@
 "use client";
 import * as React from "react";
+import { HumanAnswer } from "@/components/human-answer";
 import { GateApproval } from "@/components/gate-approval";
 import { AssigneeField } from "@/components/assignee-field";
 import { DependencyEditor } from "@/components/dependency-editor";
@@ -32,6 +33,7 @@ import {
 import { beadOrigin, originOf, originTitle } from "@/lib/attribution";
 import { withBasePath } from "@/lib/base-path";
 import {
+  needsHuman,
   catColor,
   statusLabel,
   typeColor,
@@ -736,6 +738,13 @@ function DrawerBody({
           )}
           {!editing && !readOnly && <AiAssistPanel bead={bead} />}
         </Section>
+
+        {needsHuman(bead) && (
+          <Section>
+            <Header icon="user" label="Your answer" />
+            <HumanAnswer key={bead.id} bead={bead} />
+          </Section>
+        )}
 
         {/* Dependencies */}
         <Section>
