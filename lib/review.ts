@@ -118,16 +118,20 @@ export async function reverseAnswer(
   }
   let ackedHeld = acked;
   let closed: Bead | null = null;
+  let step: "comment" | "unset" | "close" = "comment";
   try {
     if (comment !== null) await store.addComment(id, comment, actor);
+    step = "unset";
     if (acked) {
       await store.setMetadata(id, { [ACKED_KEY]: null }, actor);
       ackedHeld = false;
     }
+    step = "close";
     closed = await store.setStatus(id, "closed", actor, reason);
   } catch (e) {
     const found = await reread();
-    if (found && found.status === "closed" && found.close_reason === reason) {
+    // Only a failed close can have worked: another writer's same-reason close after a failed comment or unset is not ours.
+    if (step === "close" && found && found.status === "closed" && found.close_reason === reason) {
       closed = found; // the close worked; only its trailing read failed
     } else {
       const cleanup: Record<string, null> = { [REVIEW_KEY]: null, [REVIEW_BY_KEY]: null, [REVIEW_REASON_KEY]: null };

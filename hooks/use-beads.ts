@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import { toastError } from "@/components/error-toast";
 import { api, type BeadsResponse } from "@/lib/api-client";
 import type { HumanChoice, QuestionAnswer } from "@/lib/human-choices";
+import type { HumanBody } from "@/lib/human-validate";
 import type { Bead, CreateInput, UpdateInput, DepType } from "@/lib/schema";
 import { useApp } from "@/components/app-context";
 
@@ -240,6 +241,34 @@ export function useDismissHuman() {
     mutationToast<{ id: string; choice?: HumanChoice }, Bead>(
       ({ id, choice }) => api.human.dismiss(projectId, id, choice),
       (a) => `Dismissed ${a.id}`,
+      qc,
+      beadsKey(projectId),
+    ),
+  );
+}
+
+/** To Review: keep a manager's answer. */
+export function useAcceptReview() {
+  const { projectId } = useApp();
+  const qc = useQueryClient();
+  return useMutation(
+    mutationToast<{ id: string }, Bead>(
+      ({ id }) => api.review.accept(projectId, id),
+      (a) => `Accepted the answer to ${a.id}`,
+      qc,
+      beadsKey(projectId),
+    ),
+  );
+}
+
+/** To Review: replace a manager's answer with the operator's own. */
+export function useReverseReview() {
+  const { projectId } = useApp();
+  const qc = useQueryClient();
+  return useMutation(
+    mutationToast<{ id: string; answer: HumanBody }, Bead>(
+      ({ id, answer }) => api.review.reverse(projectId, id, answer),
+      (a) => `Reversed the answer to ${a.id}`,
       qc,
       beadsKey(projectId),
     ),

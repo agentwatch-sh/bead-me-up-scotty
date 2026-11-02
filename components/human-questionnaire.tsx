@@ -2,18 +2,23 @@
 import * as React from "react";
 import { useApp } from "@/components/app-context";
 import { useSubmitQuestions } from "@/hooks/use-beads";
+import { useAnswerSubmit, type AnswerSubmit } from "@/components/human-answer";
 import type { Bead } from "@/lib/schema";
-import type { HumanChoice, HumanQuestion, QuestionAnswer } from "@/lib/human-choices";
+import { renderGroup, type HumanChoice, type HumanQuestion, type QuestionAnswer } from "@/lib/human-choices";
 
 type Draft = { selected: HumanChoice[]; text: string; declined: boolean };
 
-export function HumanQuestionnaire({ bead, initialQuestions }: { bead: Bead; initialQuestions: HumanQuestion[] }) {
+export function HumanQuestionnaire({ bead, initialQuestions, submit: override }: { bead: Bead; initialQuestions: HumanQuestion[]; submit?: AnswerSubmit }) {
   const { readOnly } = useApp();
   const submit = useSubmitQuestions();
+  const sink = useAnswerSubmit(override);
+  const send = (action: "respond" | "dismiss", list: QuestionAnswer[]) => override
+    ? sink.run({ action, answers: list, text: renderGroup(list) })
+    : submit.mutate({ id: bead.id, action, answers: list });
   // Keep the shown questions and chosen snapshots stable until a refresh. The server rejects stale submissions.
   const [questions] = React.useState(initialQuestions);
   const [drafts, setDrafts] = React.useState<Record<string, Draft>>(() => Object.fromEntries(questions.map((q) => [q.id, { selected: [], text: "", declined: false }])));
-  const disabled = readOnly || submit.isPending || bead.status === "closed";
+  const disabled = readOnly || sink.pending || submit.isPending || (!override && bead.status === "closed");
   const update = (id: string, change: (draft: Draft) => Draft) => setDrafts((previous) => ({ ...previous, [id]: change(previous[id]) }));
   const answers = questions.map((q): QuestionAnswer | null => {
     const draft = drafts[q.id];
@@ -26,7 +31,7 @@ export function HumanQuestionnaire({ bead, initialQuestions }: { bead: Bead; ini
   const complete = answers.every((answer) => answer !== null);
   const recommendations = questions.map((q): QuestionAnswer => ({ id: q.id, question: q.question, header: q.header,
     multiSelect: q.multiSelect, action: "responded", choices: [{ version: 1, ...q.options[0] }], text: null }));
-  const error = submit.error instanceof Error ? submit.error.message : submit.error ? "The answers could not be saved." : null;
+  const error = sink.error ?? (submit.error instanceof Error ? submit.error.message : submit.error ? "The answers could not be saved." : null);
 
   return (
     <div data-human-answer={bead.id} className="min-w-0">
@@ -73,9 +78,9 @@ export function HumanQuestionnaire({ bead, initialQuestions }: { bead: Bead; ini
       {error && <p role="alert" className="mt-2 text-[12px] text-red-500">{error}</p>}
       <p className="my-2 text-[12px] text-[var(--text-3)]">Dismiss uses the recommended choice for every question.</p>
       <div className="flex flex-wrap justify-end gap-2">
-        <button type="button" disabled={disabled} onClick={() => submit.mutate({ id: bead.id, action: "dismiss", answers: recommendations })}
+        <button type="button" disabled={disabled} onClick={() => send("dismiss", recommendations)}
           className="h-8 rounded-lg border border-border px-3 text-[12px] disabled:opacity-50">Dismiss</button>
-        <button type="button" disabled={disabled || !complete} onClick={() => submit.mutate({ id: bead.id, action: "respond", answers: answers as QuestionAnswer[] })}
+        <button type="button" disabled={disabled || !complete} onClick={() => send("respond", answers as QuestionAnswer[])}
           className="h-8 rounded-lg bg-[var(--brand)] px-3 text-[12px] text-white disabled:opacity-50">Respond</button>
       </div>
     </div>

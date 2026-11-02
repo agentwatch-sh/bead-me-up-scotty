@@ -12,6 +12,7 @@ import {
   DropdownMenuLabel,
 } from "@/components/ui/dropdown-menu";
 import { initials, avatarColor, needsHuman, readyHumanGate } from "@/lib/beads-view";
+import { reviewCount } from "@/lib/review";
 import { useGamification } from "@/hooks/use-beads";
 // GITHUB_REPO is shared with the build badge (where bug/feature issues are filed).
 import { GITHUB_REPO } from "@/lib/build-info";
@@ -62,6 +63,8 @@ export function Sidebar({
   // "Needs You" = agent-flagged beads (bd human) + ready human-approval gates.
   const needsYouCount =
     beads.filter(needsHuman).length + beads.filter((b) => readyHumanGate(b, index)).length;
+  // "To Review" = answers a manager gave for you that you have not accepted or reversed.
+  const toReviewCount = reviewCount(beads, actor);
   const game = useGamification(projectId, !!meta?.gamification);
 
   return (
@@ -86,7 +89,7 @@ export function Sidebar({
 
 
       <nav className="flex flex-col gap-[2px]">
-        {navViews(!!meta?.gamification).map((n) => {
+        {navViews(!!meta?.gamification).filter((n) => n.key !== "toreview" || toReviewCount > 0 || view === "toreview").map((n) => {
           const active = view === n.key;
           return (
             <button
@@ -103,6 +106,14 @@ export function Sidebar({
               <span className="flex-1">{n.label}</span>
               {n.key === "epics" && epicCount > 0 && (
                 <span className="font-mono text-[11px] text-[var(--text-3)]">{epicCount}</span>
+              )}
+              {n.key === "toreview" && toReviewCount > 0 && (
+                <span
+                  className="min-w-[18px] rounded-full px-[6px] py-px text-center text-[11px] font-semibold text-white"
+                  style={{ background: "var(--brand)" }}
+                >
+                  {toReviewCount}
+                </span>
               )}
               {n.key === "needsyou" && needsYouCount > 0 && (
                 <span

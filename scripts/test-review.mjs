@@ -169,6 +169,14 @@ for (const failAt of ["comment", "meta"]) {
   await assert.rejects(() => go(o, false), (e) => e.code === "reverse_incomplete");
   console.log("PASS reverseAnswer: a close whose read failed is a success, with the record or the warning");
 }
+for (const failAt of ["comment", "meta"]) {
+  // Someone else closed the item with our reason after our comment or unset failed: not our close.
+  const s = fakeStore({ fail: { [failAt]: 1 }, getResult: bead({ close_reason: "Responded" }) });
+  await assert.rejects(() => go(s, true), (e) => e instanceof ReverseError && e.code === "reverse_incomplete");
+  assert.ok(!s.calls.some((c) => c.includes('"board.review":"reversed"')), "no reversed record");
+  assert.ok(!s.calls.some((c) => c.startsWith("close")), "no close after the failed step");
+  console.log(`PASS reverseAnswer: another writer's same-reason close after a failed ${failAt} is not success`);
+}
 {
   const s = fakeStore({ fail: { meta: 1, cleanup: 1 }, getResult: bead({ status: "open", closed_at: null }) });
   await assert.rejects(() => go(s, true), (e) => e.code === "reverse_incomplete" && e.reviewRemoved === false);

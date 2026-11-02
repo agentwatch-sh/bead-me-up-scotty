@@ -4,29 +4,63 @@ import { HumanQuestionnaire } from "@/components/human-questionnaire";
 import { useApp } from "@/components/app-context";
 import { Icon } from "@/components/icons";
 import { useRespondHuman, useDismissHuman, useDeclineHuman } from "@/hooks/use-beads";
+import type { HumanBody } from "@/lib/human-validate";
 import { parseQuestions, parseChoices, renderChoice, isMultiSelect, renderSelection, type HumanChoice } from "@/lib/human-choices";
 import type { Bead } from "@/lib/schema";
 
-/** Shared answer controls for the inbox and item detail. */
-export function HumanAnswer({ bead }: { bead: Bead }) {
-  const questions = parseQuestions(bead.metadata?.["scotty.choices"]);
-  return questions ? <HumanQuestionnaire key={bead.id} bead={bead} initialQuestions={questions} /> : <SingleHumanAnswer key={bead.id} bead={bead} />;
+/** Posts an answer somewhere else (To Review sends a Reverse); a throw keeps what the person typed. */
+export type AnswerSubmit = (body: HumanBody) => Promise<unknown>;
+
+/** Runs an override submit with its own pending flag and error text. */
+export function useAnswerSubmit(submit: AnswerSubmit | undefined) {
+  const [pending, setPending] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+  const run = async (body: HumanBody) => {
+    setPending(true);
+    setError(null);
+    try {
+      await submit?.(body);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "The answer could not be saved.");
+    } finally {
+      setPending(false);
+    }
+  };
+  return { pending, error, run };
 }
 
-function SingleHumanAnswer({ bead }: { bead: Bead }) {
+/** Shared answer controls for the inbox and item detail. */
+export function HumanAnswer({ bead, submit }: { bead: Bead; submit?: AnswerSubmit }) {
+  const questions = parseQuestions(bead.metadata?.["scotty.choices"]);
+  return questions ? <HumanQuestionnaire key={bead.id} bead={bead} initialQuestions={questions} submit={submit} /> : <SingleHumanAnswer key={bead.id} bead={bead} submit={submit} />;
+}
+
+function SingleHumanAnswer({ bead, submit }: { bead: Bead; submit?: AnswerSubmit }) {
   const { readOnly } = useApp();
   const respond = useRespondHuman();
   const dismiss = useDismissHuman();
   const decline = useDeclineHuman();
+  const override = useAnswerSubmit(submit);
   const [selected, setSelected] = React.useState<HumanChoice[]>([]);
   const selectedIds = selected.map((choice) => choice.id);
   const [text, setText] = React.useState("");
   const options = parseChoices(bead.metadata?.["scotty.choices"]);
   const multiSelect = isMultiSelect(bead.metadata?.["scotty.choices"]);
   const recommended: HumanChoice | undefined = options ? { version: 1, ...options[0] } : undefined;
-  const disabled = readOnly || respond.isPending || dismiss.isPending || decline.isPending || bead.status === "closed";
+  // With an override the item is closed on purpose (a Reverse answers a closed item).
+  const disabled = readOnly || override.pending || respond.isPending || dismiss.isPending || decline.isPending || (!submit && bead.status === "closed");
   const error = respond.error || dismiss.error || decline.error;
-  const errorMessage = error instanceof Error ? error.message : error ? "The answer could not be saved." : null;
+  const errorMessage = override.error ?? (error instanceof Error ? error.message : error ? "The answer could not be saved." : null);
+  // Each action goes to the override when there is one, else to the human route.
+  const sendRespond = (text: string, choice?: HumanChoice, choices?: HumanChoice[]) => submit
+    ? override.run({ action: "respond", text, ...(choice ? { choice } : {}), ...(choices ? { choices } : {}) })
+    : respond.mutate({ id: bead.id, text, choice, choices });
+  const sendDecline = (text: string) => submit ? override.run({ action: "decline", text }) : decline.mutate({ id: bead.id, text });
+  const sendDismiss = () => submit
+    ? override.run({ action: "dismiss", ...(recommended ? { choice: recommended, text: renderChoice(recommended) } : {}) })
+    : dismiss.mutate({ id: bead.id, choice: recommended });
+  // The review route refuses a Dismiss with no option to record.
+  const showDismiss = !submit || !!recommended;
 
   return (
     <div data-human-answer={bead.id} className="min-w-0">
@@ -41,7 +75,7 @@ function SingleHumanAnswer({ bead }: { bead: Bead }) {
                 aria-pressed={multiSelect ? selectedIds.includes(option.id) : undefined}
                 onClick={() => multiSelect
                   ? setSelected((previous) => previous.some((item) => item.id === option.id) ? previous.filter((item) => item.id !== option.id) : [...previous, choice])
-                  : respond.mutate({ id: bead.id, text: renderChoice(choice), choice })}
+                  : sendRespond(renderChoice(choice), choice)}
                 className="w-full rounded-lg border border-border bg-[var(--surface-2)] p-3 text-left whitespace-normal break-words hover:border-[var(--brand)] focus-visible:outline-2 focus-visible:outline-[var(--brand)] disabled:opacity-50">
                 <span className="flex flex-wrap items-center gap-2 text-[13px] font-[600]">
                   {multiSelect && selectedIds.includes(option.id) && <span aria-hidden="true">✓</span>}
@@ -63,13 +97,13 @@ function SingleHumanAnswer({ bead }: { bead: Bead }) {
       {multiSelect && text.trim() && selected.length > 0 && <p className="mb-2 text-[12px] text-[var(--text-3)]">Respond sends your written answer. Clear it to send the selected options.</p>}
       {recommended && <p className="mb-2 text-[12px] text-[var(--text-3)]">Dismiss uses: {recommended.label}.</p>}
       <div className="flex flex-wrap items-center justify-end gap-2">
-        <button type="button" disabled={disabled || !text.trim()} onClick={() => decline.mutate({ id: bead.id, text: text.trim() })}
+        <button type="button" disabled={disabled || !text.trim()} onClick={() => sendDecline(text.trim())}
           className="h-8 rounded-lg border border-border bg-[var(--surface-2)] px-3 text-[12.5px] font-[550] text-[var(--text-2)] hover:bg-[var(--surface-3)] disabled:opacity-50">Decline question</button>
-        <button type="button" disabled={disabled} onClick={() => dismiss.mutate({ id: bead.id, choice: recommended })}
-          className="h-8 rounded-lg border border-border bg-[var(--surface-2)] px-3 text-[12.5px] font-[550] text-[var(--text-2)] hover:bg-[var(--surface-3)] disabled:opacity-50">Dismiss</button>
+        {showDismiss && <button type="button" disabled={disabled} onClick={sendDismiss}
+          className="h-8 rounded-lg border border-border bg-[var(--surface-2)] px-3 text-[12.5px] font-[550] text-[var(--text-2)] hover:bg-[var(--surface-3)] disabled:opacity-50">Dismiss</button>}
         <button type="button" disabled={disabled || (!text.trim() && selected.length === 0)} onClick={() => selected.length && !text.trim()
-          ? respond.mutate({ id: bead.id, text: renderSelection(selected), choices: selected })
-          : respond.mutate({ id: bead.id, text: text.trim() })}
+          ? sendRespond(renderSelection(selected), undefined, selected)
+          : sendRespond(text.trim())}
           className="flex h-8 items-center gap-[6px] rounded-lg bg-[var(--brand)] px-3 text-[12.5px] font-[550] text-white disabled:opacity-50">
           <Icon name="check" size={14} /> Respond
         </button>
