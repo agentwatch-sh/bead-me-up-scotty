@@ -1,3 +1,4 @@
+import type { HumanBody } from "@/lib/human-validate";
 import { renderChoice, renderGroup, type QuestionAnswer, type HumanChoice } from "@/lib/human-choices";
 import { basePath } from "./base-path";
 import type { Bead, CreateInput, UpdateInput, DepType } from "./schema";
@@ -246,6 +247,20 @@ export const api = {
       request<Bead>(`${base(projectId)}/beads/${enc(id)}/human`, {
         method: "POST",
         body: JSON.stringify({ action: "dismiss", ...(choice ? { choice, text: renderChoice(choice) } : {}) }),
+      }),
+  },
+
+  // Review a manager's answer to an agent's question: keep it, or reverse it.
+  review: {
+    accept: (projectId: string, id: string) =>
+      request<Bead>(`${base(projectId)}/beads/${enc(id)}/review`, {
+        method: "POST",
+        body: JSON.stringify({ action: "accept" }),
+      }),
+    reverse: (projectId: string, id: string, answer: HumanBody) =>
+      request<Bead & { warning?: string }>(`${base(projectId)}/beads/${enc(id)}/review`, {
+        method: "POST",
+        body: JSON.stringify({ action: "reverse", answer }),
       }),
   },
 

@@ -88,6 +88,14 @@ export const demoStore: BeadsStore = {
     }
     return { ...b };
   },
+  async reopen(id) {
+    const b = find(id);
+    b.status = "open";
+    b.closed_at = null;
+    b.close_reason = null;
+    b.updated_at = nowIso();
+    return { ...b };
+  },
   async remove(id) {
     beads = beads.filter((b) => b.id !== id);
   },

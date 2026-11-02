@@ -248,6 +248,13 @@ export function createBdStore(repoPath: string): BeadsStore {
       });
     },
 
+    reopen(id, actor) {
+      return serializeWrite(repoPath, async () => {
+        await runBdRaw(["reopen", id], rw(actor));
+        return show(id);
+      });
+    },
+
     remove(id, actor) {
       return serializeWrite(repoPath, async () => {
         await runBdRaw(["delete", id, "--force"], rw(actor));
