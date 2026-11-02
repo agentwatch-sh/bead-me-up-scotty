@@ -125,6 +125,17 @@ for (const key of ["board.review", "board.review_by", "board.review_reason", "bo
 assert.equal(bead.metadata["scotty.rank"], 2048);
 console.log("PASS review API: a Needs You answer removes the review keys and board.acked");
 
+// A Needs You answer on an item that the manager already answered and closed points to To Review.
+const m = managerAnswered();
+for (const body of [{ action: "respond", choice: choice(green), text: renderChoice(choice(green)) }, { action: "respond", text: "Use green." }, { action: "decline", text: "No." }]) {
+  const late = await postTo(`${m}/human`, body);
+  assert.equal(late.status, 409);
+  assert.deepEqual(await late.json(), { error: "Your manager answered this; review it in To Review.", code: "manager_answered" });
+}
+assert.equal(comments(m).length, 1, "no new comment");
+assert.equal(show(m).metadata["board.review"], "pending");
+console.log("PASS review API: a Needs You answer on the manager's closed answer points to To Review");
+
 // A percent-encoded path segment does not reach the review route (the gateway relies on this).
 const p = managerAnswered();
 const probe = await postTo(`${p}/%72eview`, { action: "accept" });

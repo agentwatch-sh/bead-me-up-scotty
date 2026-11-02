@@ -2,7 +2,7 @@ import { getStore } from "@/lib/store";
 import { getConfig } from "@/lib/config";
 import { ok, fail } from "@/lib/api";
 import { humanBodySchema, validateHumanAnswer } from "@/lib/human-validate";
-import { ACKED_KEY, REVIEW_KEY, REVIEWED_BY_KEY, REVIEWED_AT_KEY, ReverseError, needsReview, reverseAnswer } from "@/lib/review";
+import { ACKED_KEY, REVIEW_KEY, REVIEWED_BY_KEY, REVIEWED_AT_KEY, ReverseError, errorTag, needsReview, reverseAnswer } from "@/lib/review";
 import { z } from "zod";
 
 export const dynamic = "force-dynamic";
@@ -53,7 +53,8 @@ export async function POST(req: Request, { params }: Ctx) {
       const { bead, warning } = await reverseAnswer(store, id, verdict.comment, verdict.reason, cfg.humanActor, acked, now);
       return ok(warning ? { ...bead, warning } : bead);
     } catch (e) {
-      if (e instanceof ReverseError) console.error(`review: ${e.code} on ${id}:`, e.cause);
+      // The name and code of bd's error only: its message can hold the answer text.
+      if (e instanceof ReverseError) console.error(`review: ${e.code} on ${id}: ${errorTag(e.cause)}`);
       if (e instanceof ReverseError && e.code === "reverse_not_started") {
         return ok({ error: "The reverse did not start. Try again.", code: e.code }, 500);
       }

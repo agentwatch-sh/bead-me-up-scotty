@@ -70,6 +70,18 @@ export function reviewCount(beads: Bead[], humanActor: string): number {
   return beads.filter((b) => needsReview(b, humanActor)).length;
 }
 
+/**
+ * An error as a server log line may show it: its name, and its code when the
+ * code is a plain token. Never its message: bd's message can hold its argv,
+ * and `bd comment ID TEXT` puts the operator's answer text there.
+ */
+export function errorTag(err: unknown): string {
+  if (!(err instanceof Error)) return "a non-Error value";
+  const code = (err as { code?: unknown }).code;
+  const plain = (typeof code === "string" || typeof code === "number") && /^[A-Za-z0-9_.-]{1,64}$/.test(String(code));
+  return plain ? `${err.name} (${code})` : err.name;
+}
+
 export type ReverseCode = "reverse_not_started" | "reverse_incomplete";
 
 export class ReverseError extends Error {

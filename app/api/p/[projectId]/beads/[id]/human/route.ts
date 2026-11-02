@@ -2,7 +2,7 @@ import { getStore } from "@/lib/store";
 import { getConfig } from "@/lib/config";
 import { ok, fail } from "@/lib/api";
 import { humanBodySchema, validateHumanAnswer } from "@/lib/human-validate";
-import { ACKED_KEY, REVIEW_KEY, REVIEW_BY_KEY, REVIEW_REASON_KEY } from "@/lib/review";
+import { ACKED_KEY, REVIEW_KEY, REVIEW_BY_KEY, REVIEW_REASON_KEY, errorTag } from "@/lib/review";
 
 export const dynamic = "force-dynamic";
 
@@ -44,7 +44,7 @@ export async function POST(req: Request, { params }: Ctx) {
       if (item.metadata[ACKED_KEY] !== undefined && item.metadata[ACKED_KEY] !== null) cleanup[ACKED_KEY] = null;
       return ok(await store.setMetadata(id, cleanup, cfg.humanActor));
     } catch (e) {
-      console.error(`human: the review record of ${id} stays:`, e);
+      console.error(`human: the review record of ${id} stays: ${errorTag(e)}`);
       return ok(result);
     }
   } catch (e) {

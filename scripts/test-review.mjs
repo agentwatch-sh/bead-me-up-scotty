@@ -9,7 +9,7 @@ const require = createRequire(import.meta.url);
 function load(name) {
   const exports = {};
   const code = ts.transpileModule(readFileSync(new URL(`../lib/${name}.ts`, import.meta.url), "utf8"), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
-  vm.runInNewContext(code, { exports, require: (id) => id.startsWith("./") ? load(id.slice(2)) : require(id), Error, Object, Date, Array }, { filename: name });
+  vm.runInNewContext(code, { exports, require: (id) => id.startsWith("./") ? load(id.slice(2)) : require(id), Error, Object, Date, Array, TextEncoder }, { filename: name });
   return exports;
 }
 const review = load("review");
@@ -187,4 +187,52 @@ for (const failAt of ["comment", "meta"]) {
   const r = await go(s, false);
   assert.equal(r.warning, "review_record_failed");
   console.log("PASS reverseAnswer: a failed final record is a warning, the answer stands");
+}
+{
+  // A server log line names the error by its name and code only: bd's message can hold its
+  // argv, and `bd comment ID TEXT` puts the operator's answer text there (M5).
+  const { errorTag } = review;
+  const execFailure = Object.assign(new Error("Command failed: bd comment x-1 SECRET ANSWER TEXT"), { code: 1 });
+  assert.equal(errorTag(execFailure), "Error (1)");
+  class BdError extends Error { constructor(m, c) { super(m); this.name = "BdError"; this.code = c; } }
+  assert.equal(errorTag(new BdError("bd: SECRET ANSWER TEXT", "not_found")), "BdError (not_found)");
+  assert.equal(errorTag(new BdError("SECRET ANSWER TEXT")), "BdError");
+  assert.equal(errorTag(new BdError("x", "SECRET ANSWER TEXT")), "BdError", "a code that is not a plain token is left out");
+  assert.equal(errorTag("SECRET ANSWER TEXT"), "a non-Error value");
+  assert.equal(errorTag(undefined), "a non-Error value");
+  for (const route of ["review", "human"]) {
+    const src = readFileSync(new URL(`../app/api/p/[projectId]/beads/[id]/${route}/route.ts`, import.meta.url), "utf8");
+    const logs = src.split("\n").filter((line) => line.includes("console."));
+    assert.ok(logs.length > 0, route);
+    for (const line of logs) assert.match(line, /console\.error\(`[^`]*\$\{errorTag\([^)]*\)\}`\);/, `${route}: ${line.trim()}`);
+  }
+  console.log("PASS errorTag: a log line holds the error's name and code, never its message");
+}
+{
+  // M3: an answer from Needs You on an item that the manager already answered and closed
+  // (its review pending) says where the answer is, instead of "The choices changed".
+  const { validateHumanAnswer } = load("human-validate");
+  const { renderChoice } = load("human-choices");
+  const green = { version: 1, id: "green", label: "Use green", description: "Make a new theme.", recommended: false };
+  const blue = { version: 1, id: "blue", label: "Use blue", description: "Keep blue.", recommended: true };
+  const meta = { "scotty.choices": { version: 1, options: [green, blue] }, "board.review": "pending", "board.review_by": "manager:test/manager" };
+  const answered = bead({ metadata: meta });
+  const MESSAGE = "Your manager answered this; review it in To Review.";
+  for (const body of [
+    { action: "respond", choice: green, text: renderChoice(green) },
+    { action: "dismiss", choice: blue, text: renderChoice(blue) },
+    { action: "respond", text: "Use green." },
+    { action: "decline", text: "The premise is wrong." },
+    { action: "dismiss" },
+  ]) {
+    const verdict = validateHumanAnswer(answered, body, { closedOk: false });
+    assert.deepEqual({ ...verdict }, { ok: false, status: 409, error: MESSAGE, code: "manager_answered" }, JSON.stringify(body));
+  }
+  // A Reverse (closedOk) still passes, and an item without a pending review keeps the old answers.
+  assert.equal(validateHumanAnswer(answered, { action: "respond", choice: green, text: renderChoice(green) }, { closedOk: true }).ok, true);
+  const accepted = bead({ metadata: { ...meta, "board.review": "accepted" } });
+  assert.equal(validateHumanAnswer(accepted, { action: "respond", choice: green, text: renderChoice(green) }, { closedOk: false }).code, "stale_choice");
+  const open = bead({ status: "open", closed_at: null, metadata: meta });
+  assert.equal(validateHumanAnswer(open, { action: "respond", choice: green, text: renderChoice(green) }, { closedOk: false }).ok, true, "an open item with a stale pending is answerable");
+  console.log("PASS validateHumanAnswer: an item the manager answered and closed points to To Review");
 }

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { Bead } from "./schema";
 import { parseChoices, choiceSnapshot, renderChoice, isMultiSelect, selectionSnapshot, renderSelection, renderDecline, parseQuestions, normalizeAnswers, renderGroup } from "./human-choices";
+import { REVIEW_KEY } from "./review";
 
 export const humanBodySchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("decline"), text: z.string().min(1).max(4000).refine((value) => value.trim().length > 0) }),
@@ -18,9 +19,14 @@ const fail = (status: number, error: string, code: string): HumanValidation => (
 /**
  * The human route's checks on one answer, with no writes. `closedOk` lets a
  * closed item pass (a Reverse answers an item that the manager closed); a
- * deferred item and one without the `human` label never pass.
+ * deferred item and one without the `human` label never pass. Without it, a
+ * closed item whose manager answer waits for review points to To Review.
  */
 export function validateHumanAnswer(item: Bead | null, body: HumanBody, opts: { closedOk: boolean }): HumanValidation {
+  // The manager answered and closed it while the person had it open in Needs You.
+  if (!opts.closedOk && item?.status === "closed" && item.metadata?.[REVIEW_KEY] === "pending") {
+    return fail(409, "Your manager answered this; review it in To Review.", "manager_answered");
+  }
   const answerable = (b: Bead | null): b is Bead =>
     !!b && (opts.closedOk || b.status !== "closed") && b.status !== "deferred" && b.labels.includes("human");
   const questions = parseQuestions(item?.metadata?.["scotty.choices"]);
