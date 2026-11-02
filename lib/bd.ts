@@ -5,6 +5,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import {
   beadSchema,
+  commentSchema,
   unwrapEnvelope,
   type Bead,
   type CreateInput,
@@ -174,6 +175,13 @@ export function createBdStore(repoPath: string): BeadsStore {
           if (e instanceof BdError && e.code === "not_found") return null;
           throw e;
         }
+      });
+    },
+
+    comments(id) {
+      return serializeWrite(repoPath, async () => {
+        const data = await runBdJson(["comments", id], ro);
+        return commentSchema.array().parse(Array.isArray(data) ? data : []);
       });
     },
 

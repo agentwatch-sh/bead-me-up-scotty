@@ -30,9 +30,10 @@ export async function POST(req: Request, { params }: Ctx) {
     const cfg = getConfig();
     const body = bodySchema.parse(await req.json());
 
-    // `bd show` leaves the comments out, and the latest answer decides, so read the list.
-    const item = (await store.list()).find((b) => b.id === id) ?? null;
-    if (!item || !needsReview(item)) {
+    // `bd show` leaves the comments out, and the latest answer decides.
+    const found = await store.get(id);
+    const item = found ? { ...found, comments: await store.comments(id) } : null;
+    if (!item || !needsReview(item, cfg.humanActor)) {
       return ok({ error: "This answer is not waiting for your review.", code: "not_pending" }, 409);
     }
     if (body.action === "accept") {
@@ -52,6 +53,7 @@ export async function POST(req: Request, { params }: Ctx) {
       const { bead, warning } = await reverseAnswer(store, id, verdict.comment, verdict.reason, cfg.humanActor, acked, now);
       return ok(warning ? { ...bead, warning } : bead);
     } catch (e) {
+      if (e instanceof ReverseError) console.error(`review: ${e.code} on ${id}:`, e.cause);
       if (e instanceof ReverseError && e.code === "reverse_not_started") {
         return ok({ error: "The reverse did not start. Try again.", code: e.code }, 500);
       }

@@ -1,5 +1,5 @@
 import "server-only";
-import type { Bead, CreateInput, UpdateInput, DepType } from "./schema";
+import type { Bead, Comment, CreateInput, UpdateInput, DepType } from "./schema";
 import { getProject, touchProject, DEMO_PROJECT, ConfigError } from "./config";
 import { createBdStore, isBdAvailable } from "./bd";
 import { demoStore } from "./demo-store";
@@ -22,6 +22,8 @@ export interface BeadsStore {
   kind: "bd" | "demo";
   list(): Promise<Bead[]>;
   get(id: string): Promise<Bead | null>;
+  /** One item's comments (`bd comments ID`); `get` leaves them out. */
+  comments(id: string): Promise<Comment[]>;
   create(input: CreateInput, actor: string): Promise<Bead>;
   update(id: string, patch: UpdateInput, actor: string): Promise<Bead>;
   /**

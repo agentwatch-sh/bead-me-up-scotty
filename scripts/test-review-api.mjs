@@ -17,7 +17,7 @@ const choice = (o) => ({ version: 1, ...o });
 
 // An item as the manager leaves it: the review record, the answer comment, the close.
 function managerAnswered({ acked = true } = {}) {
-  const meta = { "scotty.choices": definition, "scotty.rank": 1024, ...(acked ? { "board.acked": "agent:s1" } : {}) };
+  const meta = { "scotty.choices": definition, "scotty.rank": 1024, ...(acked ? { "board.acked": true } : {}) };
   const id = bd("create", "Which theme?", "--type", "task", "--labels", "human,question", "--metadata", JSON.stringify(meta), "--json").id;
   run(MANAGER, ["update", id, "--set-metadata", "board.review=pending", "--set-metadata", `board.review_by=${MANAGER}`, "--set-metadata", "board.review_reason=Blue is the default."]);
   run(MANAGER, ["comment", id, renderChoice(choice(blue))]);
@@ -112,20 +112,39 @@ assert.equal((await review(f, { action: "accept" })).status, 409);
 // An open item never shows.
 const g = bd("create", "Open one", "--type", "task", "--labels", "human,question", "--json").id;
 assert.equal((await review(g, { action: "accept" })).status, 409);
-assert.equal((await review("no-such-id", { action: "accept" })).status, 409);
-console.log("PASS review API: a later operator answer, an open item and an unknown item are 409");
+assert.ok((await review("no-such-id", { action: "accept" })).status >= 400, "an unknown item is refused"); // bd's not-found code is not "not_found", so store.get throws: 400
+console.log("PASS review API: a later operator answer and an open item are 409; an unknown item is refused");
 
 // An answer from Needs You on an open item that still holds the review keys removes them.
-const h = bd("create", "Half-reversed", "--type", "task", "--labels", "human,question", "--metadata", JSON.stringify({ "board.review": "pending", "board.review_by": MANAGER, "board.review_reason": "r", "scotty.rank": 2048 }), "--json").id;
+const h = bd("create", "Half-reversed", "--type", "task", "--labels", "human,question", "--metadata", JSON.stringify({ "board.review": "pending", "board.review_by": MANAGER, "board.review_reason": "r", "board.acked": true, "scotty.rank": 2048 }), "--json").id;
 const answered = await postTo(`${h}/human`, { action: "respond", text: "Use green." });
 assert.equal(answered.status, 200, await answered.text());
 bead = show(h);
 assert.equal(bead.status, "closed");
-for (const key of ["board.review", "board.review_by", "board.review_reason"]) assert.equal(bead.metadata[key], undefined, key);
+for (const key of ["board.review", "board.review_by", "board.review_reason", "board.acked"]) assert.equal(bead.metadata[key], undefined, key);
 assert.equal(bead.metadata["scotty.rank"], 2048);
-console.log("PASS review API: a Needs You answer removes the review keys");
+console.log("PASS review API: a Needs You answer removes the review keys and board.acked");
 
-// Probe: does a percent-encoded path segment reach the review route?
+// A percent-encoded path segment does not reach the review route (the gateway relies on this).
 const p = managerAnswered();
 const probe = await postTo(`${p}/%72eview`, { action: "accept" });
-console.log(`PROBE %72eview: status ${probe.status}; review is now ${show(p).metadata["board.review"]}`);
+assert.equal(probe.status, 404);
+assert.equal(show(p).metadata["board.review"], "pending");
+console.log("PASS review API: /%72eview is a 404 and the review stays pending");
+
+// A manager's dismissal with no comment (a free-text item) still shows, so Accept works.
+const q = bd("create", "Free text?", "--type", "task", "--labels", "human,question", "--json").id;
+run(MANAGER, ["update", q, "--set-metadata", "board.review=pending", "--set-metadata", `board.review_by=${MANAGER}`]);
+run(MANAGER, ["close", q, "--reason", "Dismissed"]);
+assert.equal((await review(q, { action: "accept" })).status, 200);
+console.log("PASS review API: a comment-less manager dismissal can be accepted");
+
+// A decline in keep-open mode still closes Declined (needs a server with SCOTTY_HUMAN_RESPOND=keep-open).
+if (process.env.SCOTTY_TEST_KEEPOPEN_URL) {
+  const k = bd("create", "Which theme?", "--type", "task", "--labels", "human,question", "--json").id;
+  const kb = process.env.SCOTTY_TEST_KEEPOPEN_URL;
+  const r = await fetch(`${kb}/api/p/${project}/beads/${k}/human`, { method: "POST", headers: { "content-type": "application/json", origin: new URL(kb).origin, connection: "close" }, body: JSON.stringify({ action: "decline", text: "No." }) });
+  assert.equal(r.status, 200, await r.text());
+  assert.equal(show(k).close_reason, "Declined");
+  console.log("PASS human API: a decline in keep-open mode closes Declined");
+}

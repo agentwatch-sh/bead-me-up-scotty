@@ -26,6 +26,9 @@ export const demoStore: BeadsStore = {
   async get(id) {
     return beads.find((b) => b.id === id) ?? null;
   },
+  async comments(id) {
+    return [...(find(id).comments ?? [])];
+  },
   async create(input: CreateInput, actor: string) {
     const id = "bd-" + Math.random().toString(16).slice(2, 6);
     const dependencies: Dependency[] = [];

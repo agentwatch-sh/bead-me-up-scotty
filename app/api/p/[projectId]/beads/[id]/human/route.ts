@@ -2,7 +2,7 @@ import { getStore } from "@/lib/store";
 import { getConfig } from "@/lib/config";
 import { ok, fail } from "@/lib/api";
 import { humanBodySchema, validateHumanAnswer } from "@/lib/human-validate";
-import { REVIEW_KEY, REVIEW_BY_KEY, REVIEW_REASON_KEY } from "@/lib/review";
+import { ACKED_KEY, REVIEW_KEY, REVIEW_BY_KEY, REVIEW_REASON_KEY } from "@/lib/review";
 
 export const dynamic = "force-dynamic";
 
@@ -34,13 +34,17 @@ export async function POST(req: Request, { params }: Ctx) {
     const verdict = validateHumanAnswer(item, body, { closedOk: false });
     if (!verdict.ok) return ok({ error: verdict.error, code: verdict.code }, verdict.status);
     if (verdict.comment !== null) await store.addComment(id, verdict.comment, cfg.humanActor);
-    const result = keepOpen
+    const result = keepOpen && verdict.reason !== "Declined"
       ? await store.removeLabel(id, "human", cfg.humanActor)
       : await store.setStatus(id, "closed", cfg.humanActor, verdict.reason);
-    if (item?.metadata?.[REVIEW_KEY] === undefined) return ok(result);
+    if (!item?.metadata || item.metadata[REVIEW_KEY] === undefined) return ok(result);
     try {
-      return ok(await store.setMetadata(id, { [REVIEW_KEY]: null, [REVIEW_BY_KEY]: null, [REVIEW_REASON_KEY]: null }, cfg.humanActor));
-    } catch {
+      const cleanup: Record<string, null> = { [REVIEW_KEY]: null, [REVIEW_BY_KEY]: null, [REVIEW_REASON_KEY]: null };
+      // A failed Reverse can leave board.acked on the open item, and agentwatch skips acked items.
+      if (item.metadata[ACKED_KEY] !== undefined && item.metadata[ACKED_KEY] !== null) cleanup[ACKED_KEY] = null;
+      return ok(await store.setMetadata(id, cleanup, cfg.humanActor));
+    } catch (e) {
+      console.error(`human: the review record of ${id} stays:`, e);
       return ok(result);
     }
   } catch (e) {
