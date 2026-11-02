@@ -546,3 +546,31 @@ Run `node scripts/test-human-choices.mjs` for the pure contract tests (Node 22.1
 The API and UI scripts require `SCOTTY_TEST_URL`, `SCOTTY_CHOICES_REPO`, and an isolated disposable board.
 Use `SCOTTY_TEST_BD` to select bd and `SCOTTY_BROWSER_EXECUTABLE` to select a headless browser.
 Run `node scripts/test-human-choices-api.mjs`, `node scripts/test-human-decline-api.mjs`, and `node scripts/test-human-choices-ui.mjs` on those fixtures.
+
+Version 2 groups one to four questions in the same item:
+
+```json
+{
+  "scotty.choices": {
+    "version": 2,
+    "questions": [{
+      "id": "theme",
+      "question": "Which theme should the page use?",
+      "header": "Theme",
+      "multiSelect": false,
+      "options": [
+        {"id":"blue","label":"Use blue","description":"Keep blue.","recommended":true},
+        {"id":"green","label":"Use green","description":"Create green.","recommended":false}
+      ]
+    }]
+  }
+}
+```
+
+Each question has its own presets, free-text field, and Decline question action.
+The operator answers or declines every question, then presses Respond once.
+Dismiss selects every recommendation. One comment preserves all results in a `board-answers` JSON fence.
+Question IDs are unique. Headers contain 1-12 characters; question text has at most 500 characters.
+The version 2 definition limit is 32 KiB. Version 1 retains its existing controls.
+Run `node scripts/test-questionnaire.mjs` for the group contract tests.
+Run `node scripts/test-questionnaire-api-ui.mjs` against the isolated server and disposable board for group API and browser checks.

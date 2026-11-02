@@ -1,4 +1,4 @@
-import { renderChoice, type HumanChoice } from "@/lib/human-choices";
+import { renderChoice, renderGroup, type QuestionAnswer, type HumanChoice } from "@/lib/human-choices";
 import { basePath } from "./base-path";
 import type { Bead, CreateInput, UpdateInput, DepType } from "./schema";
 import type { UpdateStatus, UpdateResult, UpdateChannel, UpdateTarget } from "./update-types";
@@ -227,6 +227,11 @@ export const api = {
 
   // Act on a "Needs You" (human-labelled) bead, mirroring `bd human`.
   human: {
+    submit: (projectId: string, id: string, action: "respond" | "dismiss", answers: QuestionAnswer[]) =>
+      request<Bead>(`${base(projectId)}/beads/${enc(id)}/human`, {
+        method: "POST",
+        body: JSON.stringify({ action, answers, text: renderGroup(answers) }),
+      }),
     decline: (projectId: string, id: string, text: string) =>
       request<Bead>(`${base(projectId)}/beads/${enc(id)}/human`, {
         method: "POST",

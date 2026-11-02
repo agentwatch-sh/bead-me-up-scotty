@@ -1,13 +1,19 @@
 "use client";
 import * as React from "react";
+import { HumanQuestionnaire } from "@/components/human-questionnaire";
 import { useApp } from "@/components/app-context";
 import { Icon } from "@/components/icons";
 import { useRespondHuman, useDismissHuman, useDeclineHuman } from "@/hooks/use-beads";
-import { parseChoices, renderChoice, isMultiSelect, renderSelection, type HumanChoice } from "@/lib/human-choices";
+import { parseQuestions, parseChoices, renderChoice, isMultiSelect, renderSelection, type HumanChoice } from "@/lib/human-choices";
 import type { Bead } from "@/lib/schema";
 
 /** Shared answer controls for the inbox and item detail. */
 export function HumanAnswer({ bead }: { bead: Bead }) {
+  const questions = parseQuestions(bead.metadata?.["scotty.choices"]);
+  return questions ? <HumanQuestionnaire key={bead.id} bead={bead} initialQuestions={questions} /> : <SingleHumanAnswer key={bead.id} bead={bead} />;
+}
+
+function SingleHumanAnswer({ bead }: { bead: Bead }) {
   const { readOnly } = useApp();
   const respond = useRespondHuman();
   const dismiss = useDismissHuman();

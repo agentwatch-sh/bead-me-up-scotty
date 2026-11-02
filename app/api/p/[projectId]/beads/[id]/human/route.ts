@@ -1,7 +1,7 @@
 import { getStore } from "@/lib/store";
 import { getConfig } from "@/lib/config";
 import { ok, fail } from "@/lib/api";
-import { parseChoices, choiceSnapshot, renderChoice, isMultiSelect, selectionSnapshot, renderSelection, renderDecline } from "@/lib/human-choices";
+import { parseChoices, choiceSnapshot, renderChoice, isMultiSelect, selectionSnapshot, renderSelection, renderDecline, parseQuestions, normalizeAnswers, renderGroup } from "@/lib/human-choices";
 import { z } from "zod";
 
 export const dynamic = "force-dynamic";
@@ -10,8 +10,8 @@ type Ctx = { params: Promise<{ projectId: string; id: string }> };
 
 const bodySchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("decline"), text: z.string().min(1).max(4000).refine((value) => value.trim().length > 0) }),
-  z.object({ action: z.literal("respond"), text: z.string().min(1), choice: z.unknown().optional(), choices: z.unknown().optional() }),
-  z.object({ action: z.literal("dismiss"), text: z.string().optional(), choice: z.unknown().optional() }),
+  z.object({ action: z.literal("respond"), text: z.string().min(1), choice: z.unknown().optional(), choices: z.unknown().optional(), answers: z.unknown().optional() }),
+  z.object({ action: z.literal("dismiss"), text: z.string().optional(), choice: z.unknown().optional(), answers: z.unknown().optional() }),
 ]);
 
 /**
@@ -33,6 +33,29 @@ export async function POST(req: Request, { params }: Ctx) {
     const body = bodySchema.parse(await req.json());
     const keepOpen = process.env.SCOTTY_HUMAN_RESPOND === "keep-open";
 
+    const item = await store.get(id);
+    const questions = parseQuestions(item?.metadata?.["scotty.choices"]);
+    if (questions && (body.action === "decline" || body.answers === undefined)) {
+      return ok({ error: "Answer or decline every question, then submit once.", code: "incomplete_answers" }, 409);
+    }
+    if (body.action !== "decline" && body.answers !== undefined) {
+      const answers = normalizeAnswers(body.answers);
+      if (!item || item.status === "closed" || item.status === "deferred" || !item.labels.includes("human")
+        || body.choice !== undefined || (body.action === "respond" && body.choices !== undefined)
+        || !questions || !answers || questions.length !== answers.length
+        || answers.some((answer, i) => {
+          const question = questions[i];
+          return answer.id !== question.id || answer.question !== question.question || answer.header !== question.header
+            || answer.multiSelect !== question.multiSelect || answer.choices?.some((choice) => {
+              const option = question.options.find((o) => o.id === choice.id);
+              return !option || renderChoice({ version: 1, ...option }) !== renderChoice(choice);
+            }) || (body.action === "dismiss" && (answer.action !== "responded" || answer.choices?.length !== 1 || !answer.choices[0].recommended));
+        })) return ok({ error: "The questions changed or the answers are incomplete. Refresh and answer every question.", code: "stale_questions" }, 409);
+      if (body.text !== renderGroup(answers)) return ok({ error: "The comment does not match the answers.", code: "invalid_answers_text" }, 400);
+      await store.addComment(id, body.text, cfg.humanActor);
+      if (keepOpen) return ok(await store.removeLabel(id, "human", cfg.humanActor));
+      return ok(await store.setStatus(id, "closed", cfg.humanActor, body.action === "dismiss" ? "Dismissed" : "Responded"));
+    }
     if (body.action === "decline") {
       const bead = await store.get(id);
       if (!bead || bead.status === "closed" || bead.status === "deferred" || !bead.labels.includes("human")) {

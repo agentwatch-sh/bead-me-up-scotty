@@ -7,7 +7,7 @@ import {
 import { toast } from "sonner";
 import { toastError } from "@/components/error-toast";
 import { api, type BeadsResponse } from "@/lib/api-client";
-import type { HumanChoice } from "@/lib/human-choices";
+import type { HumanChoice, QuestionAnswer } from "@/lib/human-choices";
 import type { Bead, CreateInput, UpdateInput, DepType } from "@/lib/schema";
 import { useApp } from "@/components/app-context";
 
@@ -201,6 +201,19 @@ export function useRespondHuman() {
     mutationToast<{ id: string; text: string; choice?: HumanChoice; choices?: HumanChoice[] }, Bead>(
       ({ id, text, choice, choices }) => api.human.respond(projectId, id, text, choice, choices),
       (a) => `Responded to ${a.id}`,
+      qc,
+      beadsKey(projectId),
+    ),
+  );
+}
+
+export function useSubmitQuestions() {
+  const { projectId } = useApp();
+  const qc = useQueryClient();
+  return useMutation(
+    mutationToast<{ id: string; action: "respond" | "dismiss"; answers: QuestionAnswer[] }, Bead>(
+      ({ id, action, answers }) => api.human.submit(projectId, id, action, answers),
+      (a) => `Answered ${a.id}`,
       qc,
       beadsKey(projectId),
     ),
