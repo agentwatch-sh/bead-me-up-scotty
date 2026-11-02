@@ -265,14 +265,22 @@ export function useAcceptReview() {
 export function useReverseReview() {
   const { projectId } = useApp();
   const qc = useQueryClient();
-  return useMutation(
-    mutationToast<{ id: string; answer: HumanBody }, Bead>(
-      ({ id, answer }) => api.review.reverse(projectId, id, answer),
-      (a) => `Reversed the answer to ${a.id}`,
-      qc,
-      beadsKey(projectId),
-    ),
-  );
+  return useMutation({
+    mutationFn: ({ id, answer }: { id: string; answer: HumanBody }) => api.review.reverse(projectId, id, answer),
+    onSuccess: (res, { id }) => {
+      // The route answers 200 with a warning when the answer was saved but the review record was not.
+      if (res.warning === "review_record_failed") {
+        toast.warning(`Your answer to ${id} went to the agent, but the review record was not saved.`, {
+          duration: Infinity,
+          closeButton: true,
+        });
+      } else {
+        toast.success(`Reversed the answer to ${id}`);
+      }
+      qc.invalidateQueries({ queryKey: beadsKey(projectId) });
+    },
+    onError: (err: unknown) => toastError(err),
+  });
 }
 
 export function useArchiveBead() {

@@ -2,7 +2,8 @@
 import * as React from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useApp } from "@/components/app-context";
-import { HumanAnswer, type AnswerSubmit } from "@/components/human-answer";
+import { HumanAnswer } from "@/components/human-answer";
+import type { AnswerSubmit } from "@/hooks/use-answer-submit";
 import { Icon } from "@/components/icons";
 import { toastError } from "@/components/error-toast";
 import { api } from "@/lib/api-client";
@@ -14,7 +15,13 @@ import type { Bead } from "@/lib/schema";
 
 /** What the manager answered, as a person reads it. */
 function answerText(bead: Bead, text: string | undefined): string {
-  if (!text) return bead.close_reason === "Dismissed" ? "Dismissed (the recommended option)" : "No answer text";
+  if (!text) {
+    if (bead.close_reason !== "Dismissed") return "No answer text";
+    // A dismissal writes no comment; it took the recommended option. Name it only when the options parse.
+    const options = parseChoices(bead.metadata?.["scotty.choices"]);
+    if (options) return `Dismissed (${options.find((o) => o.recommended)?.label ?? options[0].label})`;
+    return parseQuestions(bead.metadata?.["scotty.choices"]) ? "Dismissed (the recommended option for each question)" : "Dismissed";
+  }
   const choice = parseChoice(text);
   if (choice) return choice.label;
   const selection = parseSelection(text);
@@ -42,10 +49,20 @@ export function ToReviewView() {
     [beads, actor],
   );
   const [busy, setBusy] = React.useState(false);
+  // Rows with a request running or a Reverse panel open. Accept all waits for them.
+  const [held, setHeld] = React.useState<ReadonlySet<string>>(new Set());
+  const hold = React.useCallback((id: string, on: boolean) => {
+    setHeld((previous) => {
+      if (previous.has(id) === on) return previous;
+      const next = new Set(previous);
+      if (on) next.add(id); else next.delete(id);
+      return next;
+    });
+  }, []);
   const [bulkError, setBulkError] = React.useState<string | null>(null);
 
   const acceptAll = async () => {
-    if (readOnly || busy || rows.length === 0) return;
+    if (readOnly || busy || held.size > 0 || rows.length === 0) return;
     if (!confirm(`Accept all ${rows.length} answers?`)) return;
     setBusy(true);
     setBulkError(null);
@@ -67,13 +84,13 @@ export function ToReviewView() {
         <Icon name="check" size={18} className="text-[var(--text-2)]" />
         <h1 className="text-[15px] font-[650]">To Review</h1>
         <span className="text-[12px] text-[var(--text-3)]">
-          · {rows.length === 0 ? "nothing to review" : `${rows.length} answers by your manager`}
+          · {rows.length === 0 ? "nothing to review" : `${rows.length} ${rows.length === 1 ? "answer" : "answers"} by your manager`}
         </span>
         <span className="flex-1" />
         {rows.length > 0 && (
           <button
             type="button"
-            disabled={readOnly || busy}
+            disabled={readOnly || busy || held.size > 0}
             onClick={acceptAll}
             className="h-8 rounded-lg border border-border bg-[var(--surface-2)] px-3 text-[12.5px] font-[550] text-[var(--text-2)] hover:bg-[var(--surface-3)] disabled:opacity-50"
           >
@@ -90,7 +107,7 @@ export function ToReviewView() {
         ) : (
           <div className="mx-auto flex max-w-3xl flex-col gap-3">
             {rows.map((b) => (
-              <ReviewRow key={b.id} bead={b} actor={actor} disabled={busy} />
+              <ReviewRow key={b.id} bead={b} actor={actor} disabled={busy} onHold={hold} />
             ))}
           </div>
         )}
@@ -99,11 +116,16 @@ export function ToReviewView() {
   );
 }
 
-function ReviewRow({ bead, actor, disabled: bulkBusy }: { bead: Bead; actor: string; disabled: boolean }) {
+function ReviewRow({ bead, actor, disabled: bulkBusy, onHold }: { bead: Bead; actor: string; disabled: boolean; onHold: (id: string, on: boolean) => void }) {
   const { readOnly, openDetail } = useApp();
   const accept = useAcceptReview();
   const reverse = useReverseReview();
   const [reversing, setReversing] = React.useState(false);
+  const holding = reversing || accept.isPending || reverse.isPending;
+  React.useEffect(() => {
+    onHold(bead.id, holding);
+    return () => onHold(bead.id, false);
+  }, [bead.id, holding, onHold]);
   const answer = managerAnswer(bead, actor);
   const reason = bead.metadata?.[REVIEW_REASON_KEY];
   const questions = parseQuestions(bead.metadata?.["scotty.choices"]);
@@ -144,7 +166,7 @@ function ReviewRow({ bead, actor, disabled: bulkBusy }: { bead: Bead; actor: str
       {reversing ? (
         <div className="rounded-lg border border-border p-3">
           <p className="mb-3 text-[12px] text-[var(--text-2)]">Your answer replaces the manager&apos;s. The asking agent gets it as a new answer from you.</p>
-          <HumanAnswer bead={bead} submit={submit} />
+          <HumanAnswer bead={bead} submit={submit} disabled={bulkBusy} />
           <div className="mt-2 flex justify-end">
             <button type="button" disabled={disabled} onClick={() => setReversing(false)} className="h-8 rounded-lg border border-border px-3 text-[12.5px] disabled:opacity-50">
               Cancel

@@ -4,38 +4,18 @@ import { HumanQuestionnaire } from "@/components/human-questionnaire";
 import { useApp } from "@/components/app-context";
 import { Icon } from "@/components/icons";
 import { useRespondHuman, useDismissHuman, useDeclineHuman } from "@/hooks/use-beads";
-import type { HumanBody } from "@/lib/human-validate";
+import { useAnswerSubmit, type AnswerSubmit } from "@/hooks/use-answer-submit";
+import { humanBody } from "@/lib/api-client";
 import { parseQuestions, parseChoices, renderChoice, isMultiSelect, renderSelection, type HumanChoice } from "@/lib/human-choices";
 import type { Bead } from "@/lib/schema";
 
-/** Posts an answer somewhere else (To Review sends a Reverse); a throw keeps what the person typed. */
-export type AnswerSubmit = (body: HumanBody) => Promise<unknown>;
-
-/** Runs an override submit with its own pending flag and error text. */
-export function useAnswerSubmit(submit: AnswerSubmit | undefined) {
-  const [pending, setPending] = React.useState(false);
-  const [error, setError] = React.useState<string | null>(null);
-  const run = async (body: HumanBody) => {
-    setPending(true);
-    setError(null);
-    try {
-      await submit?.(body);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "The answer could not be saved.");
-    } finally {
-      setPending(false);
-    }
-  };
-  return { pending, error, run };
-}
-
 /** Shared answer controls for the inbox and item detail. */
-export function HumanAnswer({ bead, submit }: { bead: Bead; submit?: AnswerSubmit }) {
+export function HumanAnswer({ bead, submit, disabled }: { bead: Bead; submit?: AnswerSubmit; disabled?: boolean }) {
   const questions = parseQuestions(bead.metadata?.["scotty.choices"]);
-  return questions ? <HumanQuestionnaire key={bead.id} bead={bead} initialQuestions={questions} submit={submit} /> : <SingleHumanAnswer key={bead.id} bead={bead} submit={submit} />;
+  return questions ? <HumanQuestionnaire key={bead.id} bead={bead} initialQuestions={questions} submit={submit} disabled={disabled} /> : <SingleHumanAnswer key={bead.id} bead={bead} submit={submit} disabled={disabled} />;
 }
 
-function SingleHumanAnswer({ bead, submit }: { bead: Bead; submit?: AnswerSubmit }) {
+function SingleHumanAnswer({ bead, submit, disabled: held }: { bead: Bead; submit?: AnswerSubmit; disabled?: boolean }) {
   const { readOnly } = useApp();
   const respond = useRespondHuman();
   const dismiss = useDismissHuman();
@@ -48,16 +28,16 @@ function SingleHumanAnswer({ bead, submit }: { bead: Bead; submit?: AnswerSubmit
   const multiSelect = isMultiSelect(bead.metadata?.["scotty.choices"]);
   const recommended: HumanChoice | undefined = options ? { version: 1, ...options[0] } : undefined;
   // With an override the item is closed on purpose (a Reverse answers a closed item).
-  const disabled = readOnly || override.pending || respond.isPending || dismiss.isPending || decline.isPending || (!submit && bead.status === "closed");
+  const disabled = readOnly || !!held || override.pending || respond.isPending || dismiss.isPending || decline.isPending || (!submit && bead.status === "closed");
   const error = respond.error || dismiss.error || decline.error;
   const errorMessage = override.error ?? (error instanceof Error ? error.message : error ? "The answer could not be saved." : null);
   // Each action goes to the override when there is one, else to the human route.
   const sendRespond = (text: string, choice?: HumanChoice, choices?: HumanChoice[]) => submit
-    ? override.run({ action: "respond", text, ...(choice ? { choice } : {}), ...(choices ? { choices } : {}) })
+    ? override.run(humanBody.respond(text, choice, choices))
     : respond.mutate({ id: bead.id, text, choice, choices });
-  const sendDecline = (text: string) => submit ? override.run({ action: "decline", text }) : decline.mutate({ id: bead.id, text });
+  const sendDecline = (text: string) => submit ? override.run(humanBody.decline(text)) : decline.mutate({ id: bead.id, text });
   const sendDismiss = () => submit
-    ? override.run({ action: "dismiss", ...(recommended ? { choice: recommended, text: renderChoice(recommended) } : {}) })
+    ? override.run(humanBody.dismiss(recommended))
     : dismiss.mutate({ id: bead.id, choice: recommended });
   // The review route refuses a Dismiss with no option to record.
   const showDismiss = !submit || !!recommended;

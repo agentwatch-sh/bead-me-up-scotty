@@ -14,6 +14,7 @@ import { statusLabel, catColor, typeLabel } from "@/lib/beads-view";
 import { findShortcut, type KeyboardShortcut } from "@/lib/keyboard-shortcuts";
 import { ShortcutKeys } from "@/components/keyboard-help-dialog";
 import { navViews } from "@/lib/views";
+import { reviewCount } from "@/lib/review";
 
 // Issue shortcuts act on the board selection; the ones listed here open the
 // same palette page or detail view as the matching bead-page entry. "Close" is
@@ -53,12 +54,15 @@ export function CommandPalette({
   open,
   onOpenChangeAction,
   onViewAction,
+  view,
   initialPage = "root",
   initialBeadId = null,
 }: {
   open: boolean;
   onOpenChangeAction: (o: boolean) => void;
   onViewAction: (v: View) => void;
+  /** The open view: To Review stays listed while it is open. */
+  view: View;
   initialPage?: PalettePage;
   initialBeadId?: string | null;
 }) {
@@ -72,6 +76,7 @@ export function CommandPalette({
         <DialogTitle className="sr-only">Command palette</DialogTitle>
         <PaletteBody
           onView={onViewAction}
+          view={view}
           close={() => onOpenChangeAction(false)}
           initialPage={initialPage}
           initialBeadId={initialBeadId}
@@ -83,11 +88,13 @@ export function CommandPalette({
 
 function PaletteBody({
   onView,
+  view,
   close,
   initialPage,
   initialBeadId,
 }: {
   onView: (v: View) => void;
+  view: View;
   close: () => void;
   initialPage: PalettePage;
   initialBeadId: string | null;
@@ -209,7 +216,7 @@ function PaletteBody({
             </Command.Group>
 
             <Command.Group heading="Go to">
-              {navViews(!!meta?.gamification).map((v) => (
+              {navViews(!!meta?.gamification, reviewCount(beads, meta?.humanActor ?? "you") > 0 || view === "toreview").map((v) => (
                 <Item
                   key={v.key}
                   icon={v.icon}

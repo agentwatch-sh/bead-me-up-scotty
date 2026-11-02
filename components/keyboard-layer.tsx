@@ -8,6 +8,7 @@ import { useAppKeyboardShortcuts } from "@/hooks/use-app-keyboard";
 
 export function KeyboardLayer({
   projectId,
+  view,
   readOnly,
   selectedId,
   selectIdAction,
@@ -18,6 +19,7 @@ export function KeyboardLayer({
   toggleThemeAction,
 }: {
   projectId: string;
+  view: View;
   readOnly: boolean;
   selectedId: string | null;
   selectIdAction: (id: string | null) => void;
@@ -89,6 +91,7 @@ export function KeyboardLayer({
           setPaletteRequest((current) => ({ ...current, open }))
         }
         onViewAction={setViewAction}
+        view={view}
         initialPage={paletteRequest.page}
         initialBeadId={paletteRequest.beadId}
       />

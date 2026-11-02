@@ -89,7 +89,7 @@ export function Sidebar({
 
 
       <nav className="flex flex-col gap-[2px]">
-        {navViews(!!meta?.gamification).filter((n) => n.key !== "toreview" || toReviewCount > 0 || view === "toreview").map((n) => {
+        {navViews(!!meta?.gamification, toReviewCount > 0 || view === "toreview").map((n) => {
           const active = view === n.key;
           return (
             <button

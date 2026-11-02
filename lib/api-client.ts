@@ -138,6 +138,21 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * The one copy of the human-answer request bodies. The server rejects a text
+ * that does not match its snapshots, so the Needs You route and the To Review
+ * Reverse both build their bodies here.
+ */
+export const humanBody = {
+  submit: (action: "respond" | "dismiss", answers: QuestionAnswer[]): HumanBody =>
+    ({ action, answers, text: renderGroup(answers) }),
+  decline: (text: string): HumanBody => ({ action: "decline", text }),
+  respond: (text: string, choice?: HumanChoice, choices?: HumanChoice[]): HumanBody =>
+    ({ action: "respond", text, ...(choice ? { choice } : {}), ...(choices ? { choices } : {}) }),
+  dismiss: (choice?: HumanChoice): HumanBody =>
+    ({ action: "dismiss", ...(choice ? { choice, text: renderChoice(choice) } : {}) }),
+};
+
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, {
     ...init,
@@ -231,22 +246,22 @@ export const api = {
     submit: (projectId: string, id: string, action: "respond" | "dismiss", answers: QuestionAnswer[]) =>
       request<Bead>(`${base(projectId)}/beads/${enc(id)}/human`, {
         method: "POST",
-        body: JSON.stringify({ action, answers, text: renderGroup(answers) }),
+        body: JSON.stringify(humanBody.submit(action, answers)),
       }),
     decline: (projectId: string, id: string, text: string) =>
       request<Bead>(`${base(projectId)}/beads/${enc(id)}/human`, {
         method: "POST",
-        body: JSON.stringify({ action: "decline", text }),
+        body: JSON.stringify(humanBody.decline(text)),
       }),
     respond: (projectId: string, id: string, text: string, choice?: HumanChoice, choices?: HumanChoice[]) =>
       request<Bead>(`${base(projectId)}/beads/${enc(id)}/human`, {
         method: "POST",
-        body: JSON.stringify({ action: "respond", text, ...(choice ? { choice } : {}), ...(choices ? { choices } : {}) }),
+        body: JSON.stringify(humanBody.respond(text, choice, choices)),
       }),
     dismiss: (projectId: string, id: string, choice?: HumanChoice) =>
       request<Bead>(`${base(projectId)}/beads/${enc(id)}/human`, {
         method: "POST",
-        body: JSON.stringify({ action: "dismiss", ...(choice ? { choice, text: renderChoice(choice) } : {}) }),
+        body: JSON.stringify(humanBody.dismiss(choice)),
       }),
   },
 

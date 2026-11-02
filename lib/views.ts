@@ -26,6 +26,7 @@ const VIEW_NAV: ViewNavItem[] = [
 ];
 
 // Shared by the sidebar and the command palette so both offer the same views.
-export function navViews(gamification: boolean): ViewNavItem[] {
-  return VIEW_NAV.filter((view) => view.key !== "achievements" || gamification);
+// To Review shows only when something waits for review or its view is open.
+export function navViews(gamification: boolean, showToReview = true): ViewNavItem[] {
+  return VIEW_NAV.filter((view) => (view.key !== "achievements" || gamification) && (view.key !== "toreview" || showToReview));
 }

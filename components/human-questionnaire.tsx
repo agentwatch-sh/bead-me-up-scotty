@@ -2,23 +2,24 @@
 import * as React from "react";
 import { useApp } from "@/components/app-context";
 import { useSubmitQuestions } from "@/hooks/use-beads";
-import { useAnswerSubmit, type AnswerSubmit } from "@/components/human-answer";
+import { useAnswerSubmit, type AnswerSubmit } from "@/hooks/use-answer-submit";
+import { humanBody } from "@/lib/api-client";
 import type { Bead } from "@/lib/schema";
-import { renderGroup, type HumanChoice, type HumanQuestion, type QuestionAnswer } from "@/lib/human-choices";
+import type { HumanChoice, HumanQuestion, QuestionAnswer } from "@/lib/human-choices";
 
 type Draft = { selected: HumanChoice[]; text: string; declined: boolean };
 
-export function HumanQuestionnaire({ bead, initialQuestions, submit: override }: { bead: Bead; initialQuestions: HumanQuestion[]; submit?: AnswerSubmit }) {
+export function HumanQuestionnaire({ bead, initialQuestions, submit: override, disabled: held }: { bead: Bead; initialQuestions: HumanQuestion[]; submit?: AnswerSubmit; disabled?: boolean }) {
   const { readOnly } = useApp();
   const submit = useSubmitQuestions();
   const sink = useAnswerSubmit(override);
   const send = (action: "respond" | "dismiss", list: QuestionAnswer[]) => override
-    ? sink.run({ action, answers: list, text: renderGroup(list) })
+    ? sink.run(humanBody.submit(action, list))
     : submit.mutate({ id: bead.id, action, answers: list });
   // Keep the shown questions and chosen snapshots stable until a refresh. The server rejects stale submissions.
   const [questions] = React.useState(initialQuestions);
   const [drafts, setDrafts] = React.useState<Record<string, Draft>>(() => Object.fromEntries(questions.map((q) => [q.id, { selected: [], text: "", declined: false }])));
-  const disabled = readOnly || sink.pending || submit.isPending || (!override && bead.status === "closed");
+  const disabled = readOnly || !!held || sink.pending || submit.isPending || (!override && bead.status === "closed");
   const update = (id: string, change: (draft: Draft) => Draft) => setDrafts((previous) => ({ ...previous, [id]: change(previous[id]) }));
   const answers = questions.map((q): QuestionAnswer | null => {
     const draft = drafts[q.id];
