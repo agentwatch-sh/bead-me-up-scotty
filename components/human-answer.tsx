@@ -31,20 +31,24 @@ function SingleHumanAnswer({ bead, submit, disabled: held }: { bead: Bead; submi
   const disabled = readOnly || !!held || override.pending || respond.isPending || dismiss.isPending || decline.isPending || (!submit && bead.status === "closed");
   const error = respond.error || dismiss.error || decline.error;
   const errorMessage = override.error ?? (error instanceof Error ? error.message : error ? "The answer could not be saved." : null);
+  // What the person typed goes with every answer: a tapped option, the selections, Dismiss.
+  // It stays in the box until the write succeeds (the item then leaves); a failed write keeps it.
+  const note = text.trim() || undefined;
   // Each action goes to the override when there is one, else to the human route.
-  const sendRespond = (text: string, choice?: HumanChoice, choices?: HumanChoice[]) => submit
-    ? override.run(humanBody.respond(text, choice, choices))
-    : respond.mutate({ id: bead.id, text, choice, choices });
+  const sendRespond = (text: string, choice?: HumanChoice, choices?: HumanChoice[], note?: string) => submit
+    ? override.run(humanBody.respond(text, choice, choices, note))
+    : respond.mutate({ id: bead.id, text, choice, choices, note });
   const sendDecline = (text: string) => submit ? override.run(humanBody.decline(text)) : decline.mutate({ id: bead.id, text });
   const sendDismiss = () => submit
-    ? override.run(humanBody.dismiss(recommended))
-    : dismiss.mutate({ id: bead.id, choice: recommended });
+    ? override.run(humanBody.dismiss(recommended, note))
+    : dismiss.mutate({ id: bead.id, choice: recommended, note });
   // The review route refuses a Dismiss with no option to record.
   const showDismiss = !submit || !!recommended;
 
   return (
     <div data-human-answer={bead.id} className="min-w-0">
       {multiSelect && <p className="mb-2 text-[12px] text-[var(--text-2)]">Select options, then press Respond. Or write an answer below.</p>}
+      {!multiSelect && options && note && <p className="mb-2 text-[12px] text-[var(--text-3)]">Your comment goes with the option you tap.</p>}
       {options && (
         <div role="group" aria-label="Answer choices" className="mb-3 flex flex-col gap-2">
           {options.map((option) => {
@@ -55,7 +59,7 @@ function SingleHumanAnswer({ bead, submit, disabled: held }: { bead: Bead; submi
                 aria-pressed={multiSelect ? selectedIds.includes(option.id) : undefined}
                 onClick={() => multiSelect
                   ? setSelected((previous) => previous.some((item) => item.id === option.id) ? previous.filter((item) => item.id !== option.id) : [...previous, choice])
-                  : sendRespond(renderChoice(choice), choice)}
+                  : sendRespond(renderChoice(choice, note), choice, undefined, note)}
                 className="w-full rounded-lg border border-border bg-[var(--surface-2)] p-3 text-left whitespace-normal break-words hover:border-[var(--brand)] focus-visible:outline-2 focus-visible:outline-[var(--brand)] disabled:opacity-50">
                 <span className="flex flex-wrap items-center gap-2 text-[13px] font-[600]">
                   {multiSelect && selectedIds.includes(option.id) && <span aria-hidden="true">✓</span>}
@@ -70,19 +74,19 @@ function SingleHumanAnswer({ bead, submit, disabled: held }: { bead: Bead; submi
       )}
       <textarea disabled={disabled} value={text} onChange={(e) => setText(e.target.value)} rows={2}
         aria-label="Write an answer"
-        placeholder="Answer the agent's question… (posts a comment and closes the item)"
+        placeholder={options ? "Answer the agent's question, or add a comment to your choice… (closes the item)" : "Answer the agent's question… (posts a comment and closes the item)"}
         className="mb-2 w-full resize-y rounded-[9px] border border-border bg-[var(--surface-2)] p-[9px_11px] text-[13px] leading-[1.5] text-[var(--text)] outline-none focus:border-[var(--brand)]" />
       <p className="mb-2 text-[12px] text-[var(--text-3)]">To decline the question, write your reason above and press Decline question.</p>
       {errorMessage && <p role="alert" className="mb-2 text-[12px] text-red-500">{errorMessage}</p>}
-      {multiSelect && text.trim() && selected.length > 0 && <p className="mb-2 text-[12px] text-[var(--text-3)]">Respond sends your written answer. Clear it to send the selected options.</p>}
-      {recommended && <p className="mb-2 text-[12px] text-[var(--text-3)]">Dismiss uses: {recommended.label}.</p>}
+      {multiSelect && note && selected.length > 0 && <p className="mb-2 text-[12px] text-[var(--text-3)]">Respond sends the selected options with your comment.</p>}
+      {recommended && <p className="mb-2 text-[12px] text-[var(--text-3)]">Dismiss uses: {recommended.label}.{note ? " Your comment goes with it." : ""}</p>}
       <div className="flex flex-wrap items-center justify-end gap-2">
         <button type="button" disabled={disabled || !text.trim()} onClick={() => sendDecline(text.trim())}
           className="h-8 rounded-lg border border-border bg-[var(--surface-2)] px-3 text-[12.5px] font-[550] text-[var(--text-2)] hover:bg-[var(--surface-3)] disabled:opacity-50">Decline question</button>
         {showDismiss && <button type="button" disabled={disabled} onClick={sendDismiss}
           className="h-8 rounded-lg border border-border bg-[var(--surface-2)] px-3 text-[12.5px] font-[550] text-[var(--text-2)] hover:bg-[var(--surface-3)] disabled:opacity-50">Dismiss</button>}
-        <button type="button" disabled={disabled || (!text.trim() && selected.length === 0)} onClick={() => selected.length && !text.trim()
-          ? sendRespond(renderSelection(selected), undefined, selected)
+        <button type="button" disabled={disabled || (!note && selected.length === 0)} onClick={() => selected.length
+          ? sendRespond(renderSelection(selected, note), undefined, selected, note)
           : sendRespond(text.trim())}
           className="flex h-8 items-center gap-[6px] rounded-lg bg-[var(--brand)] px-3 text-[12.5px] font-[550] text-white disabled:opacity-50">
           <Icon name="check" size={14} /> Respond

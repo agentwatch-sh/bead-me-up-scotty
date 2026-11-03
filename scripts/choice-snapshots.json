@@ -29,5 +29,38 @@
       }
     ],
     "text": "Selected: Use blue; Café \"green\" 😀\nUse blue: Keep the blue theme.\nCafé \"green\" 😀: First line\nSecond line \\\n\n```board-choices\n{\"version\":1,\"choices\":[{\"version\":1,\"id\":\"blue\",\"label\":\"Use blue\",\"description\":\"Keep the blue theme.\",\"recommended\":true},{\"version\":1,\"id\":\"green\",\"label\":\"Café \\\"green\\\" 😀\",\"description\":\"First line\\nSecond line \\\\\",\"recommended\":false}]}\n```"
+  },
+  {
+    "choices": [
+      {
+        "version": 1,
+        "id": "green",
+        "label": "Café \"green\" 😀",
+        "description": "First line\nSecond line \\",
+        "recommended": false
+      }
+    ],
+    "note": "Ship it, but \"keep\" the café 😀 flag.\nSecond line \\ end",
+    "text": "Selected: Café \"green\" 😀\nFirst line\nSecond line \\\n\nThe person also wrote: Ship it, but \"keep\" the café 😀 flag.\nSecond line \\ end\n\n```board-choice\n{\"version\":1,\"id\":\"green\",\"label\":\"Café \\\"green\\\" 😀\",\"description\":\"First line\\nSecond line \\\\\",\"recommended\":false,\"note\":\"Ship it, but \\\"keep\\\" the café 😀 flag.\\nSecond line \\\\ end\"}\n```"
+  },
+  {
+    "choices": [
+      {
+        "version": 1,
+        "id": "blue",
+        "label": "Use blue",
+        "description": "Keep the blue theme.",
+        "recommended": true
+      },
+      {
+        "version": 1,
+        "id": "green",
+        "label": "Café \"green\" 😀",
+        "description": "First line\nSecond line \\",
+        "recommended": false
+      }
+    ],
+    "note": "Both.\n\nIn this order.",
+    "text": "Selected: Use blue; Café \"green\" 😀\nUse blue: Keep the blue theme.\nCafé \"green\" 😀: First line\nSecond line \\\n\nThe person also wrote: Both.\n\nIn this order.\n\n```board-choices\n{\"version\":1,\"choices\":[{\"version\":1,\"id\":\"blue\",\"label\":\"Use blue\",\"description\":\"Keep the blue theme.\",\"recommended\":true},{\"version\":1,\"id\":\"green\",\"label\":\"Café \\\"green\\\" 😀\",\"description\":\"First line\\nSecond line \\\\\",\"recommended\":false}],\"note\":\"Both.\\n\\nIn this order.\"}\n```"
   }
 ]

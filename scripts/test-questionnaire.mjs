@@ -12,3 +12,22 @@ console.log("PASS questionnaire: definitions and canonical grouped answers");
 const {readFileSync}=await import("node:fs");
 const fixture=JSON.parse(readFileSync(new URL("./questionnaire-snapshot.json",import.meta.url),"utf8"));
 assert.equal(renderGroup(fixture.answers),fixture.text,"shared Python/TypeScript group comment");
+
+// A question keeps the note typed with its choice (agentwatch, 2026-11-03).
+{
+  const { normalizeAnswers } = await import("../lib/human-choices.ts");
+  const noted = [{ ...answers[0], note: "Keep the logo." }, answers[1]];
+  const text = renderGroup(noted);
+  assert.ok(text.includes("Theme: Which theme?\nSelected: A\nThe person also wrote: Keep the logo.\n\n"));
+  assert.deepEqual(parseGroup(text), noted);
+  assert.deepEqual(parseGroup(renderGroup(answers)), answers, "no note, no note key");
+  assert.equal(normalizeAnswers([{ ...answers[1], note: "x" }]), null, "a decline has its reason, not a note");
+  const free = { ...answers[0], choices: null, text: "My own answer." };
+  assert.notEqual(normalizeAnswers([free]), null);
+  assert.equal(normalizeAnswers([{ ...free, note: "x" }]), null, "a free reply is its text");
+  for (const bad of ["", " ", null, 5, "x".repeat(4001)]) assert.equal(normalizeAnswers([{ ...answers[0], note: bad }]), null);
+  const golden = JSON.parse(readFileSync(new URL("./questionnaire-note-snapshot.json", import.meta.url), "utf8"));
+  assert.equal(renderGroup(golden.answers), golden.text, "shared Python/TypeScript group comment with a note");
+  assert.deepEqual(parseGroup(golden.text), golden.answers);
+  console.log("PASS questionnaire: a question keeps its note");
+}

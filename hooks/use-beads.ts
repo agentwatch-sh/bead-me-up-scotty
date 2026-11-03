@@ -199,8 +199,8 @@ export function useRespondHuman() {
   const { projectId } = useApp();
   const qc = useQueryClient();
   return useMutation(
-    mutationToast<{ id: string; text: string; choice?: HumanChoice; choices?: HumanChoice[] }, Bead>(
-      ({ id, text, choice, choices }) => api.human.respond(projectId, id, text, choice, choices),
+    mutationToast<{ id: string; text: string; choice?: HumanChoice; choices?: HumanChoice[]; note?: string }, Bead>(
+      ({ id, text, choice, choices, note }) => api.human.respond(projectId, id, text, choice, choices, note),
       (a) => `Responded to ${a.id}`,
       qc,
       beadsKey(projectId),
@@ -238,8 +238,8 @@ export function useDismissHuman() {
   const { projectId } = useApp();
   const qc = useQueryClient();
   return useMutation(
-    mutationToast<{ id: string; choice?: HumanChoice }, Bead>(
-      ({ id, choice }) => api.human.dismiss(projectId, id, choice),
+    mutationToast<{ id: string; choice?: HumanChoice; note?: string }, Bead>(
+      ({ id, choice, note }) => api.human.dismiss(projectId, id, choice, note),
       (a) => `Dismissed ${a.id}`,
       qc,
       beadsKey(projectId),

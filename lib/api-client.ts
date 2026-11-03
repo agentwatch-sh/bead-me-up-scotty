@@ -147,10 +147,12 @@ export const humanBody = {
   submit: (action: "respond" | "dismiss", answers: QuestionAnswer[]): HumanBody =>
     ({ action, answers, text: renderGroup(answers) }),
   decline: (text: string): HumanBody => ({ action: "decline", text }),
-  respond: (text: string, choice?: HumanChoice, choices?: HumanChoice[]): HumanBody =>
-    ({ action: "respond", text, ...(choice ? { choice } : {}), ...(choices ? { choices } : {}) }),
-  dismiss: (choice?: HumanChoice): HumanBody =>
-    ({ action: "dismiss", ...(choice ? { choice, text: renderChoice(choice) } : {}) }),
+  // `note` is what the person typed with a choice; the caller's `text` already holds it.
+  respond: (text: string, choice?: HumanChoice, choices?: HumanChoice[], note?: string): HumanBody =>
+    ({ action: "respond", text, ...(choice ? { choice } : {}), ...(choices ? { choices } : {}), ...(note !== undefined ? { note } : {}) }),
+  // With no option to record, a Dismiss keeps the person's comment as its own comment.
+  dismiss: (choice?: HumanChoice, note?: string): HumanBody =>
+    ({ action: "dismiss", ...(choice ? { choice, text: renderChoice(choice, note), ...(note !== undefined ? { note } : {}) } : note !== undefined ? { text: note } : {}) }),
 };
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
@@ -253,15 +255,15 @@ export const api = {
         method: "POST",
         body: JSON.stringify(humanBody.decline(text)),
       }),
-    respond: (projectId: string, id: string, text: string, choice?: HumanChoice, choices?: HumanChoice[]) =>
+    respond: (projectId: string, id: string, text: string, choice?: HumanChoice, choices?: HumanChoice[], note?: string) =>
       request<Bead>(`${base(projectId)}/beads/${enc(id)}/human`, {
         method: "POST",
-        body: JSON.stringify(humanBody.respond(text, choice, choices)),
+        body: JSON.stringify(humanBody.respond(text, choice, choices, note)),
       }),
-    dismiss: (projectId: string, id: string, choice?: HumanChoice) =>
+    dismiss: (projectId: string, id: string, choice?: HumanChoice, note?: string) =>
       request<Bead>(`${base(projectId)}/beads/${enc(id)}/human`, {
         method: "POST",
-        body: JSON.stringify(humanBody.dismiss(choice)),
+        body: JSON.stringify(humanBody.dismiss(choice, note)),
       }),
   },
 

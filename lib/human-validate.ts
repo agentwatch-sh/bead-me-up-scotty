@@ -1,12 +1,13 @@
 import { z } from "zod";
 import type { Bead } from "./schema";
-import { parseChoices, choiceSnapshot, renderChoice, isMultiSelect, selectionSnapshot, renderSelection, renderDecline, parseQuestions, normalizeAnswers, renderGroup } from "./human-choices";
+import { parseChoices, choiceSnapshot, renderChoice, isMultiSelect, selectionSnapshot, renderSelection, renderDecline, parseQuestions, normalizeAnswers, renderGroup, validNote, NOTE_MAX } from "./human-choices";
 import { REVIEW_KEY } from "./review";
 
 export const humanBodySchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("decline"), text: z.string().min(1).max(4000).refine((value) => value.trim().length > 0) }),
-  z.object({ action: z.literal("respond"), text: z.string().min(1), choice: z.unknown().optional(), choices: z.unknown().optional(), answers: z.unknown().optional() }),
-  z.object({ action: z.literal("dismiss"), text: z.string().optional(), choice: z.unknown().optional(), answers: z.unknown().optional() }),
+  // `note`: what the person typed with a choice; `text` holds it too, in the canonical comment.
+  z.object({ action: z.literal("respond"), text: z.string().min(1), choice: z.unknown().optional(), choices: z.unknown().optional(), answers: z.unknown().optional(), note: z.string().optional() }),
+  z.object({ action: z.literal("dismiss"), text: z.string().optional(), choice: z.unknown().optional(), answers: z.unknown().optional(), note: z.string().optional() }),
 ]);
 export type HumanBody = z.infer<typeof humanBodySchema>;
 
@@ -32,6 +33,17 @@ export function validateHumanAnswer(item: Bead | null, body: HumanBody, opts: { 
   const questions = parseQuestions(item?.metadata?.["scotty.choices"]);
   if (questions && (body.action === "decline" || body.answers === undefined)) {
     return fail(409, "Answer or decline every question, then submit once.", "incomplete_answers");
+  }
+  // The person's comment is never dropped: it rides with a choice (`note`), or a Dismiss
+  // with no choice keeps it as its comment (`text`). A note with nothing to ride on is refused.
+  if (body.action !== "decline") {
+    const withChoice = body.choice !== undefined || (body.action === "respond" && body.choices !== undefined);
+    const bareDismissText = body.action === "dismiss" && body.choice === undefined && body.text !== undefined;
+    if ((body.note !== undefined && (!withChoice || !validNote(body.note))) || (bareDismissText && !validNote(body.text))) {
+      return fail(400, `A comment with a choice or a Dismiss holds 1 to ${NOTE_MAX} characters.`, "invalid_note");
+    }
+    // A bare Dismiss writes no comment, so it may close any item; one with a comment needs an open question.
+    if (bareDismissText && !answerable(item)) return fail(409, "This question is no longer waiting for an answer.", "stale_question");
   }
   if (body.action !== "decline" && body.answers !== undefined) {
     const answers = normalizeAnswers(body.answers);
@@ -61,7 +73,7 @@ export function validateHumanAnswer(item: Bead | null, body: HumanBody, opts: { 
         const current = options.find((o) => o.id === choice.id);
         return !current || renderChoice({ version: 1, ...current }) !== renderChoice(choice);
       })) return fail(409, "The choices changed. Refresh the question and select again.", "stale_choice");
-    if (body.text !== renderSelection(selected)) {
+    if (body.text !== renderSelection(selected, body.note)) {
       return fail(400, "The choice comment does not match the selection.", "invalid_choice_text");
     }
   }
@@ -73,10 +85,10 @@ export function validateHumanAnswer(item: Bead | null, body: HumanBody, opts: { 
       || (body.action === "dismiss" && !choice.recommended)) {
       return fail(409, "The choices changed. Refresh the question and select again.", "stale_choice");
     }
-    if (body.text !== renderChoice(choice)) {
+    if (body.text !== renderChoice(choice, body.note)) {
       return fail(400, "The choice comment does not match the selection.", "invalid_choice_text");
     }
   }
-  const comment = body.action === "respond" || body.choice !== undefined ? body.text! : null;
+  const comment = body.action === "respond" || body.choice !== undefined || body.text !== undefined ? body.text! : null;
   return { ok: true, comment, reason: body.action === "respond" ? "Responded" : "Dismissed" };
 }

@@ -527,7 +527,10 @@ Free-text replies remain available. Dismiss selects the recommended option.
 Decline question requires a reason and closes the item as Declined.
 Its comment explicitly records that the person declines the question; it selects no option.
 Set `multiSelect` to true to select several options before pressing Respond.
-A written answer takes precedence over selected options; clear it to submit the selections.
+Text in the answer box goes with the answer: with a tapped option, with the selected options, and with Dismiss.
+The comment keeps it as a `The person also wrote: <note>` paragraph and as the fence's last key, `note`.
+Text alone, with no option selected, is a free-text answer. Decline uses the text as its reason.
+On an item without choices, Dismiss keeps the text as a plain comment.
 
 ```json
 {
@@ -553,7 +556,8 @@ Older builds ignore the metadata and retain free-text replies and Dismiss.
 Run `node scripts/test-human-choices.mjs` for the pure contract tests (Node 22.18+).
 The API and UI scripts require `SCOTTY_TEST_URL`, `SCOTTY_CHOICES_REPO`, and an isolated disposable board.
 Use `SCOTTY_TEST_BD` to select bd and `SCOTTY_BROWSER_EXECUTABLE` to select a headless browser.
-Run `node scripts/test-human-choices-api.mjs`, `node scripts/test-human-decline-api.mjs`, and `node scripts/test-human-choices-ui.mjs` on those fixtures.
+Run `node scripts/test-human-choices-api.mjs`, `node scripts/test-human-decline-api.mjs`, `node scripts/test-human-choices-ui.mjs`, and `node scripts/test-human-note-ui.mjs` on those fixtures.
+Run `node scripts/test-human-note.mjs` for the pure checks of a note in the human route.
 
 Version 2 groups one to four questions in the same item:
 
@@ -576,6 +580,7 @@ Version 2 groups one to four questions in the same item:
 ```
 
 Each question has its own presets, free-text field, and Decline question action.
+A question's text goes with its selected options as its note, and with Dismiss.
 The operator answers or declines every question, then presses Respond once.
 Dismiss selects every recommendation. One comment preserves all results in a `board-answers` JSON fence.
 Question IDs are unique. Headers contain 1-12 characters; question text has at most 500 characters.

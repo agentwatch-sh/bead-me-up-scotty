@@ -1,0 +1,32 @@
+{
+  "answers": [
+    {
+      "id": "q1",
+      "question": "Which theme?",
+      "header": "Theme",
+      "multiSelect": false,
+      "action": "responded",
+      "choices": [
+        {
+          "version": 1,
+          "id": "a",
+          "label": "A",
+          "description": "First option",
+          "recommended": true
+        }
+      ],
+      "text": null,
+      "note": "Keep the \"logo\" 😀\nand the footer."
+    },
+    {
+      "id": "q2",
+      "question": "Which format?",
+      "header": "Format",
+      "multiSelect": false,
+      "action": "declined",
+      "choices": null,
+      "text": "The premise is wrong."
+    }
+  ],
+  "text": "Theme: Which theme?\nSelected: A\nThe person also wrote: Keep the \"logo\" 😀\nand the footer.\n\nFormat: Which format?\nThe person declined this question: The premise is wrong.\n\n```board-answers\n{\"version\":2,\"answers\":[{\"id\":\"q1\",\"question\":\"Which theme?\",\"header\":\"Theme\",\"multiSelect\":false,\"action\":\"responded\",\"choices\":[{\"version\":1,\"id\":\"a\",\"label\":\"A\",\"description\":\"First option\",\"recommended\":true}],\"text\":null,\"note\":\"Keep the \\\"logo\\\" 😀\\nand the footer.\"},{\"id\":\"q2\",\"question\":\"Which format?\",\"header\":\"Format\",\"multiSelect\":false,\"action\":\"declined\",\"choices\":null,\"text\":\"The premise is wrong.\"}]}\n```"
+}

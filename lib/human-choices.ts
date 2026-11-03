@@ -6,6 +6,26 @@ const byteLength = (value: string) => new TextEncoder().encode(value).length;
 const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value);
 const text = (value: unknown, max: number): value is string => typeof value === "string" && value.trim().length > 0 && Array.from(value).length <= max && !/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/u.test(value);
 
+/** The most characters of the operator's note: what they typed with a choice or a Dismiss. */
+export const NOTE_MAX = 4000;
+const NOTE_PREFIX = "The person also wrote: ";
+export const validNote = (value: unknown): value is string => text(value, NOTE_MAX);
+
+/** The visible note paragraph before the fence, or nothing. Only undefined means no note. */
+function noteLine(note: string | undefined): string {
+  if (note === undefined) return "";
+  if (!validNote(note)) throw new Error("Invalid note");
+  return `\n\n${NOTE_PREFIX}${note}`;
+}
+
+/** The fenced object without its `note`, and the note; a bad note throws. */
+function splitNote(data: unknown): [unknown, string | undefined] {
+  if (!record(data) || !("note" in data)) return [data, undefined];
+  const { note, ...rest } = data;
+  if (!validNote(note)) throw new Error("Invalid note");
+  return [rest, note];
+}
+
 function option(value: unknown): value is HumanOption {
   return record(value) && typeof value.id === "string" && /^[A-Za-z0-9._-]{1,32}$/.test(value.id)
     && text(value.label, 80) && text(value.description, 240) && typeof value.recommended === "boolean";
@@ -33,18 +53,25 @@ export function choiceSnapshot(value: unknown): HumanChoice | null {
   return { version: 1, id: value.id, label: value.label, description: value.description, recommended: value.recommended };
 }
 
-export function renderChoice(choice: HumanChoice): string {
+/** One canonical comment; `note` (what the person typed with the choice) is its own paragraph and the fence's last key. */
+export function renderChoice(choice: HumanChoice, note?: string): string {
   const snapshot = { version: 1, id: choice.id, label: choice.label, description: choice.description, recommended: choice.recommended };
-  return `Selected: ${choice.label}\n${choice.description}\n\n\`\`\`board-choice\n${JSON.stringify(snapshot)}\n\`\`\``;
+  const line = noteLine(note);
+  return `Selected: ${choice.label}\n${choice.description}${line}\n\n\`\`\`board-choice\n${JSON.stringify(note === undefined ? snapshot : { ...snapshot, note })}\n\`\`\``;
 }
 
-export function parseChoice(value: string): HumanChoice | null {
+function parseChoiceAndNote(value: string): [HumanChoice, string | undefined] | null {
   const match = /\n\n```board-choice\n([^\n]+)\n```$/.exec(value);
   if (!match) return null;
   try {
-    const choice = choiceSnapshot(JSON.parse(match[1]));
-    return choice && renderChoice(choice) === value ? choice : null;
+    const [data, note] = splitNote(JSON.parse(match[1]));
+    const choice = choiceSnapshot(data);
+    return choice && renderChoice(choice, note) === value ? [choice, note] : null;
   } catch { return null; }
+}
+
+export function parseChoice(value: string): HumanChoice | null {
+  return parseChoiceAndNote(value)?.[0] ?? null;
 }
 
 
@@ -64,20 +91,31 @@ export function selectionSnapshot(value: unknown): HumanChoice[] | null {
   return choices;
 }
 
-export function renderSelection(choices: HumanChoice[]): string {
+export function renderSelection(choices: HumanChoice[], note?: string): string {
   const selected = choices.map((choice) => ({ version: 1, id: choice.id, label: choice.label, description: choice.description, recommended: choice.recommended }));
-  return `Selected: ${choices.map((c) => c.label).join("; ")}\n${choices.map((c) => `${c.label}: ${c.description}`).join("\n")}\n\n\`\`\`board-choices\n${JSON.stringify({ version: 1, choices: selected })}\n\`\`\``;
+  const line = noteLine(note);
+  const fenced = note === undefined ? { version: 1, choices: selected } : { version: 1, choices: selected, note };
+  return `Selected: ${choices.map((c) => c.label).join("; ")}\n${choices.map((c) => `${c.label}: ${c.description}`).join("\n")}${line}\n\n\`\`\`board-choices\n${JSON.stringify(fenced)}\n\`\`\``;
 }
 
-export function parseSelection(value: string): HumanChoice[] | null {
+function parseSelectionAndNote(value: string): [HumanChoice[], string | undefined] | null {
   const match = /\n\n```board-choices\n([^\n]+)\n```$/.exec(value);
   if (!match) return null;
   try {
-    const data = JSON.parse(match[1]);
+    const [data, note] = splitNote(JSON.parse(match[1]));
     if (!record(data) || data.version !== 1 || Object.keys(data).sort().join(",") !== "choices,version") return null;
     const selected = selectionSnapshot(data.choices);
-    return selected && renderSelection(selected) === value ? selected : null;
+    return selected && renderSelection(selected, note) === value ? [selected, note] : null;
   } catch { return null; }
+}
+
+export function parseSelection(value: string): HumanChoice[] | null {
+  return parseSelectionAndNote(value)?.[0] ?? null;
+}
+
+/** The person's note in a canonical choice or selection comment, else null. */
+export function parseNote(value: string): string | null {
+  return (parseChoiceAndNote(value) ?? parseSelectionAndNote(value))?.[1] ?? null;
 }
 
 export function renderDecline(reason: string): string {
@@ -95,7 +133,8 @@ export function parseDecline(value: string): string | null {
 }
 
 export type HumanQuestion = { id: string; question: string; header: string; multiSelect: boolean; options: HumanOption[] };
-export type QuestionAnswer = Omit<HumanQuestion, "options"> & { action: "responded" | "declined"; choices: HumanChoice[] | null; text: string | null };
+/** `note` is what the person typed with the question's choice; only a choice has one. */
+export type QuestionAnswer = Omit<HumanQuestion, "options"> & { action: "responded" | "declined"; choices: HumanChoice[] | null; text: string | null; note?: string };
 
 function questionIdentity(value: unknown): value is Omit<HumanQuestion, "options"> & Record<string, unknown> {
   return record(value) && typeof value.id === "string" && /^[A-Za-z0-9._-]{1,32}$/.test(value.id)
@@ -127,25 +166,28 @@ export function normalizeAnswers(value: unknown): QuestionAnswer[] | null {
   if (!Array.isArray(value) || value.length < 1 || value.length > 4) return null;
   const answers: QuestionAnswer[] = [];
   for (const entry of value) {
-    if (!questionIdentity(entry) || Object.keys(entry).sort().join(",") !== "action,choices,header,id,multiSelect,question,text") return null;
+    // A note is an optional last key.
+    if (!questionIdentity(entry) || Object.keys(entry).filter((k) => k !== "note").sort().join(",") !== "action,choices,header,id,multiSelect,question,text") return null;
     const choices = entry.choices !== null ? selectionSnapshot(entry.choices) : null;
     if (entry.action === "responded") {
       if (choices) {
         if (entry.text !== null || (!entry.multiSelect && choices.length !== 1)) return null;
       } else if (entry.choices !== null || !text(entry.text, 4000)) return null;
     } else if (entry.action !== "declined" || entry.choices !== null || !text(entry.text, 4000)) return null;
+    if ("note" in entry && (!choices || !validNote(entry.note))) return null;
     answers.push({ id: entry.id, question: entry.question, header: entry.header, multiSelect: entry.multiSelect,
-      action: entry.action, choices, text: entry.text as string | null });
+      action: entry.action, choices, text: entry.text as string | null, ...("note" in entry ? { note: entry.note as string } : {}) });
   }
   return new Set(answers.map((a) => a.id)).size === answers.length ? answers : null;
 }
 
 export function renderGroup(answers: QuestionAnswer[]): string {
   const normalized = answers.map((a) => ({ id: a.id, question: a.question, header: a.header, multiSelect: a.multiSelect,
-    action: a.action, choices: a.choices, text: a.text }));
+    action: a.action, choices: a.choices, text: a.text, ...(a.note !== undefined ? { note: a.note } : {}) }));
   const sections = answers.map((answer) => {
     const result = answer.action === "declined" ? `The person declined this question: ${answer.text}`
-      : answer.choices ? `Selected: ${answer.choices.map((c) => c.label).join("; ")}` : `The person answered: ${answer.text}`;
+      : answer.choices ? `Selected: ${answer.choices.map((c) => c.label).join("; ")}${answer.note !== undefined ? `\n${NOTE_PREFIX}${answer.note}` : ""}`
+      : `The person answered: ${answer.text}`;
     return `${answer.header}: ${answer.question}\n${result}`;
   });
   return `${sections.join("\n\n")}\n\n\`\`\`board-answers\n${JSON.stringify({ version: 2, answers: normalized })}\n\`\`\``;

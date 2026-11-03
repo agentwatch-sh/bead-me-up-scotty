@@ -26,12 +26,19 @@ export function HumanQuestionnaire({ bead, initialQuestions, submit: override, d
     const text = draft.text.trim();
     if (draft.declined && !text) return null;
     if (!text && draft.selected.length === 0) return null;
-    return { id: q.id, question: q.question, header: q.header, multiSelect: q.multiSelect,
-      action: draft.declined ? "declined" : "responded", choices: draft.declined || text ? null : draft.selected, text: text || null };
+    const identity = { id: q.id, question: q.question, header: q.header, multiSelect: q.multiSelect };
+    if (draft.declined) return { ...identity, action: "declined", choices: null, text };
+    // Selected options keep the person's text as their note; text alone is their own answer.
+    if (draft.selected.length) return { ...identity, action: "responded", choices: draft.selected, text: null, ...(text ? { note: text } : {}) };
+    return { ...identity, action: "responded", choices: null, text };
   });
   const complete = answers.every((answer) => answer !== null);
-  const recommendations = questions.map((q): QuestionAnswer => ({ id: q.id, question: q.question, header: q.header,
-    multiSelect: q.multiSelect, action: "responded", choices: [{ version: 1, ...q.options[0] }], text: null }));
+  // Dismiss takes every recommendation; each question's text goes with it as its note.
+  const recommendations = questions.map((q): QuestionAnswer => {
+    const text = drafts[q.id].text.trim();
+    return { id: q.id, question: q.question, header: q.header, multiSelect: q.multiSelect, action: "responded",
+      choices: [{ version: 1, ...q.options[0] }], text: null, ...(text ? { note: text } : {}) };
+  });
   const error = sink.error ?? (submit.error instanceof Error ? submit.error.message : submit.error ? "The answers could not be saved." : null);
 
   return (
@@ -64,20 +71,20 @@ export function HumanQuestionnaire({ bead, initialQuestions, submit: override, d
                 })}
               </div>
               <textarea aria-label={`Answer for ${question.header}`} disabled={disabled} maxLength={4000} rows={2}
-                placeholder="Write your own answer, or a reason to decline this question."
+                placeholder="Write your own answer, a comment for your choice, or a reason to decline this question."
                 value={draft.text} onChange={(event) => update(question.id, (previous) => ({ ...previous, text: event.target.value }))}
                 className="mb-2 w-full resize-y rounded-lg border border-border bg-[var(--surface-2)] p-2 text-[13px] outline-none focus:border-[var(--brand)]" />
               <button type="button" disabled={disabled || (!draft.text.trim() && !draft.declined)} aria-pressed={draft.declined}
                 onClick={() => update(question.id, (previous) => ({ ...previous, declined: !previous.declined, selected: [] }))}
                 className="h-8 rounded-lg border border-border px-3 text-[12px] disabled:opacity-50">Decline question</button>
               {draft.declined && <p className="mt-2 text-[12px] text-[var(--text-2)]">Question declined. Your text supplies the reason.</p>}
-              {!draft.declined && draft.text.trim() && draft.selected.length > 0 && <p className="mt-2 text-[12px] text-[var(--text-3)]">Your written answer takes precedence. Clear it to send the selected options.</p>}
+              {!draft.declined && draft.text.trim() && draft.selected.length > 0 && <p className="mt-2 text-[12px] text-[var(--text-3)]">Your comment goes with the selected options.</p>}
             </fieldset>
           );
         })}
       </div>
       {error && <p role="alert" className="mt-2 text-[12px] text-red-500">{error}</p>}
-      <p className="my-2 text-[12px] text-[var(--text-3)]">Dismiss uses the recommended choice for every question.</p>
+      <p className="my-2 text-[12px] text-[var(--text-3)]">Dismiss uses the recommended choice for every question, with any comment you wrote.</p>
       <div className="flex flex-wrap justify-end gap-2">
         <button type="button" disabled={disabled} onClick={() => send("dismiss", recommendations)}
           className="h-8 rounded-lg border border-border px-3 text-[12px] disabled:opacity-50">Dismiss</button>
