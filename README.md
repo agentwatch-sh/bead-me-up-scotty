@@ -427,7 +427,12 @@ components/           # sidebar, board (dnd), detail drawer, create modal, epics
 ```bash
 npm run build         # typecheck + production build
 npm run lint          # eslint
+node scripts/test-bd-args.mjs  # a comment or a title that starts with "-" stays text
 ```
+
+`lib/bd.ts` passes a comment after `--` and a title as `--title=<text>`. bd reads
+a flag anywhere in its argv, so a comment such as `--file=PATH` would otherwise
+make bd read that file into the comment.
 
 ## License
 

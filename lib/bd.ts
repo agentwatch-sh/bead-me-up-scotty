@@ -187,9 +187,13 @@ export function createBdStore(repoPath: string): BeadsStore {
 
     create(input: CreateInput, actor: string) {
       return serializeWrite(repoPath, async () => {
+        // The title is the value of --title=, never a positional argument: bd
+        // reads a flag anywhere in argv, so a title such as "--file=PATH"
+        // would be a flag. bd 1.3.1 refuses a positional title that starts
+        // with "-" even after "--", and takes any text as --title=<text>.
         const args = [
           "create",
-          input.title,
+          `--title=${input.title}`,
           "-t",
           input.issue_type,
           "--priority",
@@ -271,7 +275,9 @@ export function createBdStore(repoPath: string): BeadsStore {
 
     addComment(id, text, actor) {
       return serializeWrite(repoPath, async () => {
-        await runBdRaw(["comment", id, text], rw(actor));
+        // "--" ends the flags: a comment such as "--file=PATH" or "--actor=X"
+        // is text, not a flag. bd keeps the text after it as it is.
+        await runBdRaw(["comment", id, "--", text], rw(actor));
         return show(id);
       });
     },
