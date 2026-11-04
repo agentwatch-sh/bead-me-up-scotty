@@ -46,6 +46,22 @@ assert.equal(again.status, 409);
 assert.equal((await again.json()).code, "not_pending");
 console.log("PASS review API: accept records who and when; a second accept is 409 not_pending");
 
+// A comment from To Review is a plain comment: no verdict, and the review stays pending.
+const cm = managerAnswered();
+await new Promise((r) => setTimeout(r, 1500)); // bd stamps whole seconds: the comment comes after the close
+for (const text of ["-x why blue?", "--file=/etc/hostname"]) {
+  const commented = await postTo(`${cm}/comments`, { text });
+  assert.equal(commented.status, 200, await commented.text());
+  assert.equal(comments(cm).at(-1).text, text, "a text that starts with '-' stays text");
+  assert.equal(comments(cm).at(-1).author, "human:selden");
+}
+bead = show(cm);
+assert.equal(bead.status, "closed");
+assert.equal(bead.metadata["board.review"], "pending", "a comment is neither accept nor reverse");
+assert.equal(bead.metadata["board.reviewed_by"], undefined);
+assert.equal((await review(cm, { action: "accept" })).status, 200, "it can still be accepted");
+console.log("PASS review API: a comment keeps the review pending and records no review");
+
 // Reverse with another option.
 const b = managerAnswered();
 const before = comments(b).length;

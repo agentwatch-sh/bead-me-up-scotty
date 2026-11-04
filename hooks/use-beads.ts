@@ -261,6 +261,24 @@ export function useAcceptReview() {
   );
 }
 
+/**
+ * To Review: a comment on a manager's answer, with no verdict. It is a plain
+ * comment (the comments route): the answer stays in To Review, neither
+ * accepted nor reversed.
+ */
+export function useCommentReview() {
+  const { projectId } = useApp();
+  const qc = useQueryClient();
+  return useMutation(
+    mutationToast<{ id: string; text: string }, Bead>(
+      ({ id, text }) => api.addComment(projectId, id, text),
+      (a) => `Commented on the answer to ${a.id}`,
+      qc,
+      beadsKey(projectId),
+    ),
+  );
+}
+
 /** To Review: replace a manager's answer with the operator's own. */
 export function useReverseReview() {
   const { projectId } = useApp();

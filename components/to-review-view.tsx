@@ -10,7 +10,7 @@ import { api } from "@/lib/api-client";
 import { relTime, fmtDateTime } from "@/lib/beads-view";
 import { parseChoice, parseChoices, parseDecline, parseGroup, parseQuestions, parseSelection } from "@/lib/human-choices";
 import { managerAnswer, needsReview, REVIEW_REASON_KEY } from "@/lib/review";
-import { useAcceptReview, useReverseReview, beadsKey } from "@/hooks/use-beads";
+import { useAcceptReview, useCommentReview, useReverseReview, beadsKey } from "@/hooks/use-beads";
 import type { Bead } from "@/lib/schema";
 
 /** What the manager answered, as a person reads it. */
@@ -35,10 +35,21 @@ function answerText(bead: Bead, text: string | undefined): string {
   return text;
 }
 
+/** The board user's comments made after the close: comments on the answer, not the answer. */
+function commentsAfterClose(bead: Bead, actor: string) {
+  const closedAt = bead.closed_at ? Date.parse(bead.closed_at) : NaN;
+  if (Number.isNaN(closedAt)) return [];
+  return (bead.comments ?? []).filter((c) => {
+    const at = c.created_at ? Date.parse(c.created_at) : NaN;
+    return c.author === actor && !Number.isNaN(at) && at > closedAt;
+  });
+}
+
 /**
  * "To Review": answers a manager gave for you. The question is already closed,
  * so nothing here blocks the agent. Accept keeps the answer; Reverse replaces
- * it with yours. Nothing leaves by itself.
+ * it with yours; Comment sends your manager a comment and keeps the answer
+ * here. Nothing leaves by itself.
  */
 export function ToReviewView() {
   const { beads, meta, projectId, readOnly } = useApp();
@@ -49,7 +60,7 @@ export function ToReviewView() {
     [beads, actor],
   );
   const [busy, setBusy] = React.useState(false);
-  // Rows with a request running or a Reverse panel open. Accept all waits for them.
+  // Rows with a request running, or a Reverse or Comment panel open. Accept all waits for them.
   const [held, setHeld] = React.useState<ReadonlySet<string>>(new Set());
   const hold = React.useCallback((id: string, on: boolean) => {
     setHeld((previous) => {
@@ -120,8 +131,11 @@ function ReviewRow({ bead, actor, disabled: bulkBusy, onHold }: { bead: Bead; ac
   const { readOnly, openDetail } = useApp();
   const accept = useAcceptReview();
   const reverse = useReverseReview();
+  const comment = useCommentReview();
   const [reversing, setReversing] = React.useState(false);
-  const holding = reversing || accept.isPending || reverse.isPending;
+  const [commenting, setCommenting] = React.useState(false);
+  const [draft, setDraft] = React.useState("");
+  const holding = reversing || commenting || accept.isPending || reverse.isPending || comment.isPending;
   React.useEffect(() => {
     onHold(bead.id, holding);
     return () => onHold(bead.id, false);
@@ -130,9 +144,22 @@ function ReviewRow({ bead, actor, disabled: bulkBusy, onHold }: { bead: Bead; ac
   const reason = bead.metadata?.[REVIEW_REASON_KEY];
   const questions = parseQuestions(bead.metadata?.["scotty.choices"]);
   const options = questions ? null : parseChoices(bead.metadata?.["scotty.choices"]);
-  const disabled = readOnly || bulkBusy || accept.isPending || reverse.isPending;
+  const disabled = readOnly || bulkBusy || accept.isPending || reverse.isPending || comment.isPending;
   const acceptError = accept.error instanceof Error ? accept.error.message : null;
+  const commentError = comment.error instanceof Error ? comment.error.message : null;
   const submit: AnswerSubmit = (body) => reverse.mutateAsync({ id: bead.id, answer: body });
+  const mine = commentsAfterClose(bead, actor);
+  const sendComment = () => {
+    const text = draft.trim();
+    if (!text || disabled) return;
+    // A plain comment: no verdict, so the row stays. What was typed stays on a failure.
+    comment.mutate({ id: bead.id, text }, {
+      onSuccess: () => {
+        setDraft("");
+        setCommenting(false);
+      },
+    });
+  };
 
   return (
     <div data-review-row={bead.id} className="min-w-0 rounded-[12px] border border-border bg-[var(--surface)] p-4">
@@ -161,6 +188,18 @@ function ReviewRow({ bead, actor, disabled: bulkBusy, onHold }: { bead: Bead; ac
         <dd className="min-w-0 whitespace-pre-wrap break-words text-[var(--text-2)]">{typeof reason === "string" && reason ? reason : "No reason given"}</dd>
         <dt className="text-[var(--text-3)]">Asked by</dt>
         <dd className="min-w-0 break-words text-[var(--text-2)]">{bead.created_by || "unknown"}</dd>
+        {mine.length > 0 && (
+          <>
+            <dt className="text-[var(--text-3)]">{mine.length === 1 ? "Your comment" : "Your comments"}</dt>
+            <dd className="min-w-0 text-[var(--text-2)]">
+              <ul data-review-comments={bead.id} className="flex flex-col gap-1">
+                {mine.map((c, i) => (
+                  <li key={c.id ?? i} title={fmtDateTime(c.created_at)} className="whitespace-pre-wrap break-words">{c.text}</li>
+                ))}
+              </ul>
+            </dd>
+          </>
+        )}
       </dl>
       {acceptError && <p role="alert" className="mb-2 text-[12px] text-red-500">{acceptError}</p>}
       {reversing ? (
@@ -173,8 +212,31 @@ function ReviewRow({ bead, actor, disabled: bulkBusy, onHold }: { bead: Bead; ac
             </button>
           </div>
         </div>
+      ) : commenting ? (
+        <div className="rounded-lg border border-border p-3">
+          <p className="mb-2 text-[12px] text-[var(--text-2)]">Your comment goes to your manager. The answer stays here until you accept or reverse it.</p>
+          <textarea value={draft} onChange={(e) => setDraft(e.target.value)} rows={2} disabled={disabled}
+            aria-label="Write a comment" placeholder="Comment on the manager's answer…"
+            onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); sendComment(); } }}
+            className="mb-2 w-full resize-y rounded-[9px] border border-border bg-[var(--surface-2)] p-[9px_11px] text-[13px] leading-[1.5] text-[var(--text)] outline-none focus:border-[var(--brand)]" />
+          {commentError && <p role="alert" className="mb-2 text-[12px] text-red-500">{commentError}</p>}
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <button type="button" disabled={comment.isPending} onClick={() => { setCommenting(false); comment.reset(); }}
+              className="h-8 rounded-lg border border-border px-3 text-[12.5px] disabled:opacity-50">
+              Cancel
+            </button>
+            <button type="button" disabled={disabled || !draft.trim()} onClick={sendComment}
+              className="h-8 rounded-lg bg-[var(--brand)] px-3 text-[12.5px] font-[550] text-white disabled:opacity-50">
+              Send
+            </button>
+          </div>
+        </div>
       ) : (
         <div className="flex flex-wrap items-center justify-end gap-2">
+          <button type="button" disabled={disabled} onClick={() => { comment.reset(); setCommenting(true); }}
+            className="h-8 rounded-lg border border-border bg-[var(--surface-2)] px-3 text-[12.5px] font-[550] text-[var(--text-2)] hover:bg-[var(--surface-3)] disabled:opacity-50">
+            Comment
+          </button>
           <button type="button" disabled={disabled} onClick={() => setReversing(true)}
             className="h-8 rounded-lg border border-border bg-[var(--surface-2)] px-3 text-[12.5px] font-[550] text-[var(--text-2)] hover:bg-[var(--surface-3)] disabled:opacity-50">
             Reverse

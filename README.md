@@ -520,9 +520,9 @@ is useful to you is inspiring. Thank you for being part of it.
 
 When a manager answers an agent's question for you, the question closes at once and the agent can go on. The answer then shows in **To Review**, next to Needs You. It is not a board column, and it adds nothing to Needs You. The sidebar item shows a count when something is waiting.
 
-Each row shows the question, the manager's answer, its reason (`board.review_reason`) and who asked. **Accept** keeps the answer and the row leaves. **Reverse** opens the same answer controls as Needs You: pick another option or write an answer. The agent then gets your answer as a new answer from you. **Accept all** asks once ("Accept all N answers?") and then accepts the open project's pending rows one by one. Nothing leaves by itself.
+Each row shows the question, the manager's answer, its reason (`board.review_reason`) and who asked. **Accept** keeps the answer and the row leaves. **Reverse** opens the same answer controls as Needs You: pick another option or write an answer. The agent then gets your answer as a new answer from you. **Comment** writes a comment on the answer for your manager, with no verdict: the row stays, and `board.review` stays `pending` until you accept or reverse it. The row then shows your comments. **Accept all** asks once ("Accept all N answers?") and then accepts the open project's pending rows one by one. It waits while a Reverse or a Comment box is in use. Nothing leaves by itself.
 
-The record keeps who answered and who reviewed, and when: `board.review` (`pending`, `accepted` or `reversed`), `board.reviewed_by` and `board.reviewed_at`. The route is `POST /api/p/{project}/beads/{id}/review` with `{"action":"accept"}` or `{"action":"reverse","answer":{...}}`, where `answer` is a human-route body.
+The record keeps who answered and who reviewed, and when: `board.review` (`pending`, `accepted` or `reversed`), `board.reviewed_by` and `board.reviewed_at`. The route is `POST /api/p/{project}/beads/{id}/review` with `{"action":"accept"}` or `{"action":"reverse","answer":{...}}`, where `answer` is a human-route body. A comment uses the ordinary comments route, `POST /api/p/{project}/beads/{id}/comments` with `{"text"}`; it changes no review key.
 
 ### Choices in Needs You
 

@@ -186,6 +186,55 @@ try {
   await page.waitForFunction(() => [...document.querySelectorAll("button")].find((b) => /^Accept all/.test(b.textContent ?? ""))?.disabled === false);
   run("human:selden", ["update", held, "--set-metadata", "board.review=accepted"]);
 
+  // Comment: a plain comment on the answer, with no verdict. The row stays, the review stays pending.
+  const commented = managerAnswered("Which theme to comment on?");
+  await open(commented);
+  const commentPosts = [];
+  const onCommentPost = (r) => { if (r.method() === "POST" && r.url().includes(`/beads/${commented}/`)) commentPosts.push(new URL(r.url()).pathname); };
+  page.on("request", onCommentPost);
+  await row(commented).getByRole("button", { name: "Comment", exact: true }).click();
+  await row(commented).getByText("Your comment goes to your manager. The answer stays here until you accept or reverse it.").waitFor();
+  await page.waitForFunction(() => [...document.querySelectorAll("button")].find((b) => /^Accept all/.test(b.textContent ?? ""))?.disabled === true); // Accept all waits while a Comment panel is open
+  assert.equal(await row(commented).getByRole("button", { name: "Accept", exact: true }).count(), 0, "no Accept inside the comment panel");
+  assert.equal(await row(commented).getByRole("button", { name: "Send", exact: true }).isDisabled(), true, "nothing to send yet");
+  // Cancel keeps what was typed and sends nothing.
+  const commentBox = () => row(commented).getByRole("textbox", { name: "Write a comment" });
+  await commentBox().fill("Not yet.");
+  await row(commented).getByRole("button", { name: "Cancel", exact: true }).click();
+  assert.deepEqual(commentPosts, [], "Cancel sends nothing");
+  await row(commented).getByRole("button", { name: "Comment", exact: true }).click();
+  assert.equal(await commentBox().inputValue(), "Not yet.", "the draft stays after Cancel");
+  // A text that starts like a bd flag stays text (agentwatch #605).
+  const said = "--file=/etc/hostname Why blue, and not green?";
+  await commentBox().fill(said);
+  await row(commented).getByRole("button", { name: "Send", exact: true }).click();
+  await row(commented).locator(`[data-review-comments="${commented}"]`).getByText(said).waitFor();
+  page.off("request", onCommentPost);
+  assert.deepEqual(commentPosts, [`${new URL(base).pathname.replace(/\/$/, "")}/api/p/${project}/beads/${commented}/comments`], "one comment request, never the review route");
+  assert.equal(await row(commented).count(), 1, "the row stays");
+  await row(commented).getByRole("button", { name: "Accept", exact: true }).waitFor();
+  const afterComment = show(commented);
+  assert.equal(afterComment.status, "closed");
+  assert.equal(afterComment.metadata["board.review"], "pending", "a comment is no verdict");
+  assert.equal(afterComment.metadata["board.reviewed_by"], undefined);
+  assert.equal(afterComment.metadata["board.reviewed_at"], undefined);
+  const commentRow = comments(commented).at(-1);
+  assert.equal(commentRow.author, "human:selden");
+  assert.equal(commentRow.text, said, "the comment is the text as typed");
+  await page.waitForFunction(() => [...document.querySelectorAll("button")].find((b) => /^Accept all/.test(b.textContent ?? ""))?.disabled === false);
+  // A failed comment keeps the row, the error and what was typed.
+  await row(commented).getByRole("button", { name: "Comment", exact: true }).click();
+  await commentBox().fill("Try again.");
+  await page.route(`**/beads/${commented}/comments`, (route) => route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "The comment was not saved." }) }));
+  await row(commented).getByRole("button", { name: "Send", exact: true }).click();
+  await row(commented).getByRole("alert").waitFor();
+  assert.match(await row(commented).getByRole("alert").innerText(), /not saved/);
+  assert.equal(await commentBox().inputValue(), "Try again.", "the typed comment stays");
+  await page.unroute(`**/beads/${commented}/comments`);
+  await row(commented).getByRole("button", { name: "Cancel", exact: true }).click();
+  assert.equal(show(commented).metadata["board.review"], "pending");
+  run("human:selden", ["update", commented, "--set-metadata", "board.review=accepted"]);
+
   // A dismissal with no comment names the recommended option.
   const dismissedId = bd("create", "Which theme (dismissed)?", "--type", "task", "--labels", "human,question", "--metadata", JSON.stringify({ "scotty.choices": { version: 1, options: [green, blue] } }), "--json").id;
   run(MANAGER, ["update", dismissedId, "--set-metadata", "board.review=pending", "--set-metadata", `board.review_by=${MANAGER}`, "--set-metadata", "board.review_reason=Take the default."]);
@@ -216,6 +265,9 @@ try {
   assert.ok(await noOverflow(page), "no horizontal scroll at 390 px (collapsed row)");
   await row(failing).getByRole("button", { name: "Reverse", exact: true }).click();
   assert.ok(await noOverflow(page), "no horizontal scroll at 390 px (Reverse open)");
+  await row(failing).getByRole("button", { name: "Cancel", exact: true }).click();
+  await row(failing).getByRole("button", { name: "Comment", exact: true }).click();
+  assert.ok(await noOverflow(page), "no horizontal scroll at 390 px (Comment open)");
   const box = await row(failing).boundingBox();
   assert.ok(box.x >= 0 && box.x + box.width <= 390, "the row fits the viewport");
   run("human:selden", ["update", failing, "--set-metadata", "board.review=accepted"]);
@@ -229,9 +281,10 @@ try {
   assert.equal(await page.getByRole("button", { name: /^Accept all/ }).isDisabled(), true);
   assert.equal(await row(ro).getByRole("button", { name: "Accept", exact: true }).isDisabled(), true);
   assert.equal(await row(ro).getByRole("button", { name: "Reverse", exact: true }).isDisabled(), true);
+  assert.equal(await row(ro).getByRole("button", { name: "Comment", exact: true }).isDisabled(), true);
   run("human:selden", ["update", ro, "--set-metadata", "board.review=accepted"]);
 
   await context.close();
   assert.deepEqual(errors, []);
-  console.log("PASS review UI: badge, hidden, Accept, keyboard, Accept all, Reverse, no-options, failed reverse, mobile, read-only");
+  console.log("PASS review UI: badge, hidden, Accept, keyboard, Accept all, Reverse, Comment, no-options, failed reverse, mobile, read-only");
 } finally { await browser.close(); }
