@@ -197,12 +197,18 @@ try {
   await page.waitForFunction(() => [...document.querySelectorAll("button")].find((b) => /^Accept all/.test(b.textContent ?? ""))?.disabled === true); // Accept all waits while a Comment panel is open
   assert.equal(await row(commented).getByRole("button", { name: "Accept", exact: true }).count(), 0, "no Accept inside the comment panel");
   assert.equal(await row(commented).getByRole("button", { name: "Send", exact: true }).isDisabled(), true, "nothing to send yet");
-  // Cancel keeps what was typed and sends nothing.
+  // Cancel keeps what was typed and sends nothing. The unsent draft shows on the row, and
+  // nothing can remove the row while it waits: Accept, Reverse and Accept all wait for it.
   const commentBox = () => row(commented).getByRole("textbox", { name: "Write a comment" });
   await commentBox().fill("Not yet.");
   await row(commented).getByRole("button", { name: "Cancel", exact: true }).click();
   assert.deepEqual(commentPosts, [], "Cancel sends nothing");
-  await row(commented).getByRole("button", { name: "Comment", exact: true }).click();
+  await row(commented).locator(`[data-review-draft="${commented}"]`).getByText("Not yet.").waitFor();
+  await row(commented).getByText("Send or discard your comment first.").waitFor();
+  assert.equal(await row(commented).getByRole("button", { name: "Accept", exact: true }).isDisabled(), true, "no Accept over an unsent comment");
+  assert.equal(await row(commented).getByRole("button", { name: "Reverse", exact: true }).isDisabled(), true, "no Reverse over an unsent comment");
+  assert.equal(await page.getByRole("button", { name: /^Accept all/ }).isDisabled(), true, "Accept all waits for an unsent comment");
+  await row(commented).getByRole("button", { name: "Edit comment", exact: true }).click();
   assert.equal(await commentBox().inputValue(), "Not yet.", "the draft stays after Cancel");
   // A text that starts like a bd flag stays text (agentwatch #605).
   const said = "--file=/etc/hostname Why blue, and not green?";
@@ -231,6 +237,14 @@ try {
   assert.match(await row(commented).getByRole("alert").innerText(), /not saved/);
   assert.equal(await commentBox().inputValue(), "Try again.", "the typed comment stays");
   await page.unroute(`**/beads/${commented}/comments`);
+  // Discard drops the draft on purpose: the row's own buttons and Accept all come back.
+  await row(commented).getByRole("button", { name: "Discard", exact: true }).click();
+  assert.equal(await row(commented).locator(`[data-review-draft="${commented}"]`).count(), 0, "no unsent comment after Discard");
+  assert.equal(await row(commented).getByRole("button", { name: "Accept", exact: true }).isDisabled(), false);
+  await page.waitForFunction(() => [...document.querySelectorAll("button")].find((b) => /^Accept all/.test(b.textContent ?? ""))?.disabled === false);
+  await row(commented).getByRole("button", { name: "Comment", exact: true }).click();
+  assert.equal(await commentBox().inputValue(), "", "Discard emptied the box");
+  assert.equal(await row(commented).getByRole("button", { name: "Discard", exact: true }).count(), 0, "nothing to discard");
   await row(commented).getByRole("button", { name: "Cancel", exact: true }).click();
   assert.equal(show(commented).metadata["board.review"], "pending");
   run("human:selden", ["update", commented, "--set-metadata", "board.review=accepted"]);

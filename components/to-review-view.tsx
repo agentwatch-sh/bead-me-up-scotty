@@ -135,7 +135,10 @@ function ReviewRow({ bead, actor, disabled: bulkBusy, onHold }: { bead: Bead; ac
   const [reversing, setReversing] = React.useState(false);
   const [commenting, setCommenting] = React.useState(false);
   const [draft, setDraft] = React.useState("");
-  const holding = reversing || commenting || accept.isPending || reverse.isPending || comment.isPending;
+  // An unsent comment holds the row: nothing removes it (Accept, Reverse, Accept all)
+  // while the draft waits. Send or Discard ends it.
+  const unsent = draft.trim() !== "";
+  const holding = reversing || commenting || unsent || accept.isPending || reverse.isPending || comment.isPending;
   React.useEffect(() => {
     onHold(bead.id, holding);
     return () => onHold(bead.id, false);
@@ -188,6 +191,12 @@ function ReviewRow({ bead, actor, disabled: bulkBusy, onHold }: { bead: Bead; ac
         <dd className="min-w-0 whitespace-pre-wrap break-words text-[var(--text-2)]">{typeof reason === "string" && reason ? reason : "No reason given"}</dd>
         <dt className="text-[var(--text-3)]">Asked by</dt>
         <dd className="min-w-0 break-words text-[var(--text-2)]">{bead.created_by || "unknown"}</dd>
+        {unsent && !commenting && (
+          <>
+            <dt className="text-[var(--text-3)]">Unsent comment</dt>
+            <dd data-review-draft={bead.id} className="min-w-0 whitespace-pre-wrap break-words text-[var(--text-2)]">{draft}</dd>
+          </>
+        )}
         {mine.length > 0 && (
           <>
             <dt className="text-[var(--text-3)]">{mine.length === 1 ? "Your comment" : "Your comments"}</dt>
@@ -221,6 +230,12 @@ function ReviewRow({ bead, actor, disabled: bulkBusy, onHold }: { bead: Bead; ac
             className="mb-2 w-full resize-y rounded-[9px] border border-border bg-[var(--surface-2)] p-[9px_11px] text-[13px] leading-[1.5] text-[var(--text)] outline-none focus:border-[var(--brand)]" />
           {commentError && <p role="alert" className="mb-2 text-[12px] text-red-500">{commentError}</p>}
           <div className="flex flex-wrap items-center justify-end gap-2">
+            {unsent && (
+              <button type="button" disabled={comment.isPending} onClick={() => { setDraft(""); setCommenting(false); comment.reset(); }}
+                className="h-8 rounded-lg border border-border px-3 text-[12.5px] disabled:opacity-50">
+                Discard
+              </button>
+            )}
             <button type="button" disabled={comment.isPending} onClick={() => { setCommenting(false); comment.reset(); }}
               className="h-8 rounded-lg border border-border px-3 text-[12.5px] disabled:opacity-50">
               Cancel
@@ -233,15 +248,16 @@ function ReviewRow({ bead, actor, disabled: bulkBusy, onHold }: { bead: Bead; ac
         </div>
       ) : (
         <div className="flex flex-wrap items-center justify-end gap-2">
+          {unsent && <span className="mr-auto text-[12px] text-[var(--text-3)]">Send or discard your comment first.</span>}
           <button type="button" disabled={disabled} onClick={() => { comment.reset(); setCommenting(true); }}
             className="h-8 rounded-lg border border-border bg-[var(--surface-2)] px-3 text-[12.5px] font-[550] text-[var(--text-2)] hover:bg-[var(--surface-3)] disabled:opacity-50">
-            Comment
+            {unsent ? "Edit comment" : "Comment"}
           </button>
-          <button type="button" disabled={disabled} onClick={() => setReversing(true)}
+          <button type="button" disabled={disabled || unsent} onClick={() => setReversing(true)}
             className="h-8 rounded-lg border border-border bg-[var(--surface-2)] px-3 text-[12.5px] font-[550] text-[var(--text-2)] hover:bg-[var(--surface-3)] disabled:opacity-50">
             Reverse
           </button>
-          <button type="button" disabled={disabled} onClick={() => accept.mutate({ id: bead.id })}
+          <button type="button" disabled={disabled || unsent} onClick={() => accept.mutate({ id: bead.id })}
             className="flex h-8 items-center gap-[6px] rounded-lg bg-[var(--brand)] px-3 text-[12.5px] font-[550] text-white disabled:opacity-50">
             <Icon name="check" size={14} /> Accept
           </button>
