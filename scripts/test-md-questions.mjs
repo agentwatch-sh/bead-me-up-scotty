@@ -61,8 +61,9 @@ try {
   assert.equal(await first.locator("strong").count(), 1);
   assert.equal(await first.locator("code", { hasText: "new" }).count(), 1);
   assert.equal(await first.locator("a").count(), 0, "no link nests in an option button");
-  assert.equal(await first.locator("table thead th").count(), 5, "the option description renders its table");
-  assert.equal(await first.locator(".bd-md-table-scroll").evaluate((el) => el.scrollWidth > 0), true);
+  // An option description is inline only: a table in it shows as text, never as a table.
+  assert.equal(await first.locator("table, .bd-md-table-scroll").count(), 0, "no table inside an option button");
+  assert.ok((await first.innerText()).includes("300 dollars"), "the table's cells show as text in the option description");
   const second = fieldset.getByRole("button", { name: /Keep the old one/ });
   assert.equal(await second.locator("h1, ul, li, table, img, script").count(), 0, "no block or raw-HTML element in a label or description");
   assert.equal(await page.evaluate(() => window.__pwned), undefined, "raw HTML never runs");

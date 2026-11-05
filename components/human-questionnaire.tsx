@@ -93,7 +93,7 @@ export function HumanQuestionnaire({ bead, initialQuestions, route, disabled: he
                         {selected && <span aria-hidden="true">✓</span>}<DescriptionContent inline plainLinks text={option.label} projectId={projectId} />
                         {option.recommended && <span className="rounded bg-[var(--brand)] px-2 py-0.5 text-[11px] text-white">Recommended</span>}
                       </span>
-                      <DescriptionContent plainLinks text={option.description} projectId={projectId} className="mt-1 min-w-0 text-[12px] font-normal text-[var(--text-2)]" />
+                      <DescriptionContent inline plainLinks text={option.description} projectId={projectId} className="mt-1 block min-w-0 text-[12px] font-normal text-[var(--text-2)]" />
                     </button>
                   );
                 })}
