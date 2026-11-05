@@ -4,6 +4,7 @@ import { useApp } from "@/components/app-context";
 import { ClosedMeanwhile, failedDraft, useAnswerOutbox, type AnswerRoute } from "@/components/answer-outbox";
 import { api, humanBody } from "@/lib/api-client";
 import { HUMAN_KINDS, failureFor } from "@/lib/answer-outbox";
+import { DescriptionContent } from "@/components/description-content";
 import type { Bead } from "@/lib/schema";
 import type { HumanChoice, HumanQuestion, QuestionAnswer } from "@/lib/human-choices";
 
@@ -77,7 +78,7 @@ export function HumanQuestionnaire({ bead, initialQuestions, route, disabled: he
           return (
             <fieldset key={question.id} data-question-id={question.id} disabled={disabled} className="min-w-0 rounded-lg border border-border p-3">
               <legend className="px-1 text-[12px] font-[600]">{question.header}</legend>
-              <p className="mb-2 text-[13px] font-[600]">{question.question}</p>
+              <DescriptionContent text={question.question} projectId={projectId} className="mb-2 min-w-0 text-[13px] [&_p]:font-[600]" />
               <div role="group" aria-label={`Choices for ${question.header}`} className="mb-2 flex flex-col gap-2">
                 {question.options.map((option) => {
                   const selected = !draft.declined && draft.selected.some((c) => c.id === option.id);
@@ -89,10 +90,10 @@ export function HumanQuestionnaire({ bead, initialQuestions, route, disabled: he
                         ? previous.selected.filter((c) => c.id !== option.id) : question.multiSelect ? [...previous.selected, choice] : [choice] }))}
                       className="w-full rounded-lg border border-border bg-[var(--surface-2)] p-3 text-left whitespace-normal break-words focus-visible:outline-2 focus-visible:outline-[var(--brand)] disabled:opacity-50">
                       <span className="flex flex-wrap items-center gap-2 text-[13px] font-[600]">
-                        {selected && <span aria-hidden="true">✓</span>}{option.label}
+                        {selected && <span aria-hidden="true">✓</span>}<DescriptionContent inline plainLinks text={option.label} projectId={projectId} />
                         {option.recommended && <span className="rounded bg-[var(--brand)] px-2 py-0.5 text-[11px] text-white">Recommended</span>}
                       </span>
-                      <span className="mt-1 block text-[12px] text-[var(--text-2)]">{option.description}</span>
+                      <DescriptionContent plainLinks text={option.description} projectId={projectId} className="mt-1 min-w-0 text-[12px] font-normal text-[var(--text-2)]" />
                     </button>
                   );
                 })}

@@ -18,6 +18,8 @@ import { api } from "@/lib/api-client";
 const IMG_PATTERN = "!\\[([^\\]]*)\\]\\((attachment:\\/\\/[^)\\s]+|https?:\\/\\/[^)\\s]+)\\)";
 const SAFE_URL_PATTERN = /^(https?:|mailto:|attachment:\/\/)/i;
 
+const INLINE_ELEMENTS = ["p", "strong", "em", "del", "code", "br", "a"];
+
 function safeUrlTransform(url: string): string {
   return SAFE_URL_PATTERN.test(url) ? url : "";
 }
@@ -27,22 +29,31 @@ export function DescriptionContent({
   projectId,
   className,
   onToggleTask,
+  inline,
+  plainLinks,
 }: {
   text: string;
   projectId: string;
   className?: string;
   onToggleTask?: (index: number) => void;
+  /** One-line use (a button label): only inline elements render; a block (table, list, heading) is unwrapped to its text. */
+  inline?: boolean;
+  /** Show links as plain text, for text inside a button (a link cannot nest in a button). */
+  plainLinks?: boolean;
 }) {
   // Fresh per render; react-markdown renders checkboxes in document order, so
   // this counter assigns each the index of its source task marker.
   const counter = { i: 0 };
 
   const components: Components = {
-    a: ({ children, ...props }) => (
+    a: ({ children, ...props }) => plainLinks ? (
+      <span className="text-[var(--brand)] underline">{children}</span>
+    ) : (
       <a {...props} target="_blank" rel="noopener noreferrer" className="text-[var(--brand)] underline">
         {children}
       </a>
     ),
+    ...(inline ? { p: ({ children }) => <span>{children}</span> } : {}),
     img: ({ src, alt }) => {
       const raw = typeof src === "string" ? src : "";
       const resolved = raw.startsWith("attachment://") ? api.attachments.urlFor(projectId, raw) : raw;
@@ -78,9 +89,10 @@ export function DescriptionContent({
     },
   };
 
+  const Wrap = inline ? "span" : "div";
   return (
-    <div className={className}>
-      <div className="bd-md">
+    <Wrap className={className}>
+      <Wrap className="bd-md">
         <ReactMarkdown
           remarkPlugins={[remarkGfm]}
           // Colorize fenced code blocks; `ignoreMissing` keeps unknown languages
@@ -95,11 +107,15 @@ export function DescriptionContent({
           // user text. Keep the guard.
           urlTransform={safeUrlTransform}
           components={components}
+          // Inline use keeps to phrasing elements, so a label stays on one line.
+          // Raw HTML never renders (no rehype-raw), in either mode.
+          allowedElements={inline ? INLINE_ELEMENTS : undefined}
+          unwrapDisallowed={inline}
         >
           {text}
         </ReactMarkdown>
-      </div>
-    </div>
+      </Wrap>
+    </Wrap>
   );
 }
 
