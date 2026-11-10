@@ -9,6 +9,7 @@ import { useLastView } from "@/hooks/use-last-view";
 import { useTheme } from "@/components/theme-provider";
 import { makeIndex } from "@/lib/beads-view";
 import { AppProvider, type DetailAction, type View } from "@/components/app-context";
+import { AnswerOutboxProvider } from "@/components/answer-outbox";
 import { Sidebar } from "@/components/sidebar";
 import { Board } from "@/components/board/board";
 import { FocusView } from "@/components/focus-view";
@@ -217,6 +218,8 @@ export function AppShell({ projectId }: { projectId: string }) {
         openEpic,
       }}
     >
+      {/* The operator's answers on their way to the board: an answered item leaves its list at the click (age-6mk). */}
+      <AnswerOutboxProvider projectId={projectId} listStartedAt={data?.startedAt}>
       <div className="flex h-full flex-col overflow-hidden bg-background text-foreground text-sm">
         <ReadOnlyBanner />
         <div className="flex shrink-0 items-center gap-2 border-b border-border bg-[var(--surface)] px-3 py-2 md:hidden">
@@ -326,6 +329,7 @@ export function AppShell({ projectId }: { projectId: string }) {
         toggleThemeAction={toggleTheme}
       />
       <NotificationWatcher projectId={projectId} />
+      </AnswerOutboxProvider>
     </AppProvider>
   );
 }

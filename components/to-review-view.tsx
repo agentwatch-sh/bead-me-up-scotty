@@ -1,17 +1,19 @@
 "use client";
 import * as React from "react";
-import { useQueryClient } from "@tanstack/react-query";
 import { useApp } from "@/components/app-context";
+import { useAnswerOutbox, type AnswerRoute, type OutboxSend } from "@/components/answer-outbox";
 import { HumanAnswer } from "@/components/human-answer";
-import type { AnswerSubmit } from "@/hooks/use-answer-submit";
 import { Icon } from "@/components/icons";
-import { toastError } from "@/components/error-toast";
 import { api } from "@/lib/api-client";
 import { relTime, fmtDateTime } from "@/lib/beads-view";
 import { parseChoice, parseChoices, parseDecline, parseGroup, parseQuestions, parseSelection } from "@/lib/human-choices";
 import { managerAnswer, needsReview, REVIEW_REASON_KEY } from "@/lib/review";
-import { useAcceptReview, useCommentReview, useReverseReview, beadsKey } from "@/hooks/use-beads";
+import { useCommentReview } from "@/hooks/use-beads";
 import type { Bead } from "@/lib/schema";
+
+/** An Accept of the manager's answer, through the answer outbox: the row leaves at the click. */
+const acceptOf = (projectId: string, id: string): OutboxSend =>
+  ({ id, kind: "accept", request: () => api.review.accept(projectId, id) });
 
 /** What the manager answered, as a person reads it. */
 function answerText(bead: Bead, text: string | undefined): string {
@@ -53,11 +55,13 @@ function commentsAfterClose(bead: Bead, actor: string) {
  */
 export function ToReviewView() {
   const { beads, meta, projectId, readOnly } = useApp();
-  const qc = useQueryClient();
+  const outbox = useAnswerOutbox();
   const actor = meta?.humanActor ?? "you";
+  // A row leaves at the click of Accept or Reverse; a failed write brings it back (age-6mk).
   const rows = React.useMemo(
-    () => beads.filter((b) => needsReview(b, actor)).sort((a, b) => Date.parse(b.closed_at ?? "") - Date.parse(a.closed_at ?? "") || 0),
-    [beads, actor],
+    () => beads.filter((b) => needsReview(b, actor) && !outbox.hidden(b.id))
+      .sort((a, b) => Date.parse(b.closed_at ?? "") - Date.parse(a.closed_at ?? "") || 0),
+    [beads, actor, outbox],
   );
   const [busy, setBusy] = React.useState(false);
   // Rows with a request running, or a Reverse or Comment panel open. Accept all waits for them.
@@ -77,16 +81,11 @@ export function ToReviewView() {
     if (!confirm(`Accept all ${rows.length} answers?`)) return;
     setBusy(true);
     setBulkError(null);
-    try {
-      // One request per item, so each review is its own record.
-      for (const row of rows) await api.review.accept(projectId, row.id);
-    } catch (e) {
-      setBulkError(e instanceof Error ? e.message : "Accept all stopped.");
-      toastError(e);
-    } finally {
-      await qc.invalidateQueries({ queryKey: beadsKey(projectId) });
-      setBusy(false);
-    }
+    // One request per item, so each review is its own record. Every row leaves at
+    // once; the first failure stops the rest, which come back as they were.
+    const done = await outbox.sendInOrder(rows.map((row) => acceptOf(projectId, row.id)));
+    if (!done) setBulkError("Accept all stopped: an answer could not be accepted. Its row shows why.");
+    setBusy(false);
   };
 
   return (
@@ -128,17 +127,19 @@ export function ToReviewView() {
 }
 
 function ReviewRow({ bead, actor, disabled: bulkBusy, onHold }: { bead: Bead; actor: string; disabled: boolean; onHold: (id: string, on: boolean) => void }) {
-  const { readOnly, openDetail } = useApp();
-  const accept = useAcceptReview();
-  const reverse = useReverseReview();
+  const { readOnly, openDetail, projectId } = useApp();
+  const outbox = useAnswerOutbox();
+  const entry = outbox.entry(bead.id);
   const comment = useCommentReview();
-  const [reversing, setReversing] = React.useState(false);
+  // A failed Reverse brings the row back with its panel open, its error and what was typed.
+  const [reversing, setReversing] = React.useState(entry?.state === "failed" && entry.kind === "reverse");
   const [commenting, setCommenting] = React.useState(false);
   const [draft, setDraft] = React.useState("");
   // An unsent comment holds the row: nothing removes it (Accept, Reverse, Accept all)
   // while the draft waits. Send or Discard ends it.
   const unsent = draft.trim() !== "";
-  const holding = reversing || commenting || unsent || accept.isPending || reverse.isPending || comment.isPending;
+  const sending = entry?.state === "sending";
+  const holding = reversing || commenting || unsent || sending || comment.isPending;
   React.useEffect(() => {
     onHold(bead.id, holding);
     return () => onHold(bead.id, false);
@@ -147,10 +148,16 @@ function ReviewRow({ bead, actor, disabled: bulkBusy, onHold }: { bead: Bead; ac
   const reason = bead.metadata?.[REVIEW_REASON_KEY];
   const questions = parseQuestions(bead.metadata?.["scotty.choices"]);
   const options = questions ? null : parseChoices(bead.metadata?.["scotty.choices"]);
-  const disabled = readOnly || bulkBusy || accept.isPending || reverse.isPending || comment.isPending;
-  const acceptError = accept.error instanceof Error ? accept.error.message : null;
+  const disabled = readOnly || bulkBusy || sending || comment.isPending;
+  const acceptError = entry?.state === "failed" && entry.kind === "accept" ? entry.error : null;
   const commentError = comment.error instanceof Error ? comment.error.message : null;
-  const submit: AnswerSubmit = (body) => reverse.mutateAsync({ id: bead.id, answer: body });
+  const reverseRoute: AnswerRoute = {
+    kind: "reverse",
+    request: (body) => api.review.reverse(projectId, bead.id, body),
+    // The route answers 200 with a warning when the answer was saved but the review record was not.
+    warning: (res) => (res as { warning?: string } | null)?.warning === "review_record_failed"
+      ? `Your answer to ${bead.id} went to the agent, but the review record was not saved.` : null,
+  };
   const mine = commentsAfterClose(bead, actor);
   const sendComment = () => {
     const text = draft.trim();
@@ -214,9 +221,9 @@ function ReviewRow({ bead, actor, disabled: bulkBusy, onHold }: { bead: Bead; ac
       {reversing ? (
         <div className="rounded-lg border border-border p-3">
           <p className="mb-3 text-[12px] text-[var(--text-2)]">Your answer replaces the manager&apos;s. The asking agent gets it as a new answer from you.</p>
-          <HumanAnswer bead={bead} submit={submit} disabled={bulkBusy} />
+          <HumanAnswer bead={bead} route={reverseRoute} disabled={bulkBusy} />
           <div className="mt-2 flex justify-end">
-            <button type="button" disabled={disabled} onClick={() => setReversing(false)} className="h-8 rounded-lg border border-border px-3 text-[12.5px] disabled:opacity-50">
+            <button type="button" disabled={disabled} onClick={() => { setReversing(false); outbox.clear(bead.id); }} className="h-8 rounded-lg border border-border px-3 text-[12.5px] disabled:opacity-50">
               Cancel
             </button>
           </div>
@@ -257,7 +264,7 @@ function ReviewRow({ bead, actor, disabled: bulkBusy, onHold }: { bead: Bead; ac
             className="h-8 rounded-lg border border-border bg-[var(--surface-2)] px-3 text-[12.5px] font-[550] text-[var(--text-2)] hover:bg-[var(--surface-3)] disabled:opacity-50">
             Reverse
           </button>
-          <button type="button" disabled={disabled || unsent} onClick={() => accept.mutate({ id: bead.id })}
+          <button type="button" disabled={disabled || unsent} onClick={() => void outbox.send(acceptOf(projectId, bead.id))}
             className="flex h-8 items-center gap-[6px] rounded-lg bg-[var(--brand)] px-3 text-[12.5px] font-[550] text-white disabled:opacity-50">
             <Icon name="check" size={14} /> Accept
           </button>

@@ -565,6 +565,10 @@ Run `node scripts/test-human-choices-api.mjs`, `node scripts/test-human-decline-
 Run `node scripts/test-human-note.mjs` for the pure checks of a note in the human route.
 An answer takes one slot of the board's bd queue: its steps (read, comment, close, read) run back to back, and a list request made meanwhile runs after the close.
 Run `node scripts/test-human-answer-slot.mjs` for those checks (a fake bd; no server or board).
+An answered item leaves Needs You (or To Review) at the click and shows "Sending…"; a short confirmation follows the write.
+An older list that arrives meanwhile never brings it back; a failed write brings it back in its place with its error and what was typed.
+Run `node scripts/test-answer-outbox.mjs` for the pure rules.
+Run `node scripts/test-answer-speed-ui.mjs` against an isolated server started with `BD_BIN=scripts/slow-bd.sh`, `SCOTTY_SLOW_BD_REAL` (the real bd) and `SCOTTY_SLOW_BD_DIR` (a control folder that the test also gets): the test slows bd or fails one write through files in that folder.
 
 Version 2 groups one to four questions in the same item:
 

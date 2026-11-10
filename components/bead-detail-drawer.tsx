@@ -1,6 +1,7 @@
 "use client";
 import * as React from "react";
 import { HumanAnswer } from "@/components/human-answer";
+import { useAnswerOutbox } from "@/components/answer-outbox";
 import { GateApproval } from "@/components/gate-approval";
 import { AssigneeField } from "@/components/assignee-field";
 import { DependencyEditor } from "@/components/dependency-editor";
@@ -218,6 +219,7 @@ function DrawerBody({
     useApp();
   const actor = meta?.humanActor ?? "you";
   const isDemo = meta?.kind === "demo";
+  const outbox = useAnswerOutbox();
 
   const update = useUpdateBead();
   const setStatus = useSetStatus();
@@ -742,7 +744,14 @@ function DrawerBody({
         {needsHuman(bead) && (
           <Section>
             <Header icon="user" label="Your answer" />
-            <HumanAnswer key={bead.id} bead={bead} />
+            {/* The answer leaves at the click (the answer outbox, age-6mk); a failed write brings the form back. */}
+            {outbox.hidden(bead.id) ? (
+              <p data-answer-pending={bead.id} className="text-[12.5px] text-[var(--text-2)]">
+                {outbox.entry(bead.id)?.state === "sending" ? "Sending your answer…" : "Your answer is saved."}
+              </p>
+            ) : (
+              <HumanAnswer key={bead.id} bead={bead} />
+            )}
           </Section>
         )}
 

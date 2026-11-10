@@ -20,6 +20,8 @@ export interface Meta {
 export interface BeadsResponse {
   beads: Bead[];
   meta: Meta;
+  /** When this browser requested the list (Date.now()); set by useBeads, not the server. */
+  startedAt?: number;
 }
 
 export interface ActivityItem {
@@ -244,26 +246,12 @@ export const api = {
     request<AssistResult>(`${base(projectId)}/beads/${enc(id)}/assist`, { method: "POST" }),
 
   // Act on a "Needs You" (human-labelled) bead, mirroring `bd human`.
+  // The body comes from `humanBody` (respond, dismiss, decline, a group of answers).
   human: {
-    submit: (projectId: string, id: string, action: "respond" | "dismiss", answers: QuestionAnswer[]) =>
+    answer: (projectId: string, id: string, body: HumanBody) =>
       request<Bead>(`${base(projectId)}/beads/${enc(id)}/human`, {
         method: "POST",
-        body: JSON.stringify(humanBody.submit(action, answers)),
-      }),
-    decline: (projectId: string, id: string, text: string) =>
-      request<Bead>(`${base(projectId)}/beads/${enc(id)}/human`, {
-        method: "POST",
-        body: JSON.stringify(humanBody.decline(text)),
-      }),
-    respond: (projectId: string, id: string, text: string, choice?: HumanChoice, choices?: HumanChoice[], note?: string) =>
-      request<Bead>(`${base(projectId)}/beads/${enc(id)}/human`, {
-        method: "POST",
-        body: JSON.stringify(humanBody.respond(text, choice, choices, note)),
-      }),
-    dismiss: (projectId: string, id: string, choice?: HumanChoice, note?: string) =>
-      request<Bead>(`${base(projectId)}/beads/${enc(id)}/human`, {
-        method: "POST",
-        body: JSON.stringify(humanBody.dismiss(choice, note)),
+        body: JSON.stringify(body),
       }),
   },
 

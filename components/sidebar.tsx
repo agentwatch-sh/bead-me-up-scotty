@@ -3,6 +3,7 @@ import * as React from "react";
 import { Icon } from "@/components/icons";
 import { useTheme } from "@/components/theme-provider";
 import { useApp, type View } from "@/components/app-context";
+import { useAnswerOutbox } from "@/components/answer-outbox";
 import { ProjectSwitcher } from "@/components/project-switcher";
 import {
   DropdownMenu,
@@ -61,10 +62,13 @@ export function Sidebar({
   const actor = meta?.humanActor ?? "you";
   const epicCount = beads.filter((b) => b.issue_type === "epic").length;
   // "Needs You" = agent-flagged beads (bd human) + ready human-approval gates.
+  // An answer or a review on its way (the answer outbox) no longer counts.
+  const outbox = useAnswerOutbox();
+  const open = beads.filter((b) => !outbox.hidden(b.id));
   const needsYouCount =
-    beads.filter(needsHuman).length + beads.filter((b) => readyHumanGate(b, index)).length;
+    open.filter(needsHuman).length + beads.filter((b) => readyHumanGate(b, index)).length;
   // "To Review" = answers a manager gave for you that you have not accepted or reversed.
-  const toReviewCount = reviewCount(beads, actor);
+  const toReviewCount = reviewCount(open, actor);
   const game = useGamification(projectId, !!meta?.gamification);
 
   return (

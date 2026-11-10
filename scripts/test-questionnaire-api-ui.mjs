@@ -55,6 +55,8 @@ try{
   assert.equal(writes,0,"preset taps and per-question decline do not submit");
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=document.documentElement.clientWidth));
   await submit.click();await panel.waitFor({state:"detached"});
+  // The card leaves at the click (agentwatch age-6mk): the write is done when its confirmation shows.
+  await page.locator("[data-sonner-toast]").filter({hasText:item}).filter({hasNotText:"Sending"}).first().waitFor();
   assert.equal(writes,1,"one final request for every question");
   const saved=bd("comments",item,"--json");assert.equal(saved.length,1);
   assert.deepEqual(parseGroup(saved[0].text),answers);

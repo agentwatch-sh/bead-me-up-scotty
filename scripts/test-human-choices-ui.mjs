@@ -21,11 +21,24 @@ try {
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   const page = await context.newPage();
   page.on("pageerror", (error) => errors.push(error.message));
+  // A list export already running when the item was created can answer without it
+  // (as in test-review-ui.mjs): load again until the item shows.
   const visit = async (id, detail = false) => {
-    await page.goto(`${base}/p/choices?${detail ? `bead=${id}` : "view=needsyou"}`);
     const panel = page.locator(`[data-human-answer="${id}"]`);
-    await panel.getByRole("textbox", { name: "Write an answer" }).waitFor();
-    return panel;
+    for (let attempt = 1; ; attempt++) {
+      await page.goto(`${base}/p/choices?${detail ? `bead=${id}` : "view=needsyou"}`);
+      try {
+        await panel.getByRole("textbox", { name: "Write an answer" }).waitFor({ timeout: 8000 });
+        return panel;
+      } catch (e) {
+        if (attempt === 4) throw e;
+      }
+    }
+  };
+  // The card leaves at the click (agentwatch age-6mk): the write is done when its confirmation shows.
+  const written = async (panel, id) => {
+    await panel.waitFor({ state: "detached" });
+    await page.locator("[data-sonner-toast]").filter({ hasText: id }).filter({ hasNotText: "Sending" }).first().waitFor();
   };
   const id = create();
   let panel = await visit(id);
@@ -33,14 +46,14 @@ try {
   assert.match(await buttons.first().innerText(), /^Use blue\s+Recommended/);
   await buttons.nth(1).focus();
   await page.keyboard.press("Enter");
-  await panel.waitFor({ state: "detached" });
+  await written(panel, id);
   assert.equal(parseChoice(answer(id).text).id, "green");
   assert.equal(answer(id).author, "human:selden");
 
   const drawer = create();
   panel = await visit(drawer, true);
   await panel.getByRole("button", { name: /Use blue Recommended/ }).click();
-  await panel.waitFor({ state: "detached" });
+  await written(panel, drawer);
   assert.equal(parseChoice(answer(drawer).text).id, "blue");
 
   await page.setViewportSize({ width: 390, height: 844 });
@@ -49,7 +62,7 @@ try {
   await panel.getByText("Dismiss uses: Use blue.", { exact: true }).waitFor();
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth));
   await panel.getByRole("button", { name: "Dismiss", exact: true }).click();
-  await panel.waitFor({ state: "detached" });
+  await written(panel, dismissed);
   assert.equal(parseChoice(answer(dismissed).text).id, "blue");
   assert.equal(bd("show", dismissed, "--json")[0].close_reason, "Dismissed");
 
@@ -63,7 +76,7 @@ try {
   assert.equal(await input.inputValue(), "Use another theme.", "failed answer preserves free text");
   await page.unroute(`**/beads/${free}/human`);
   await panel.getByRole("button", { name: "Respond", exact: true }).click();
-  await panel.waitFor({ state: "detached" });
+  await written(panel, free);
   assert.equal(answer(free).text, "Use another theme.");
 
   const multiple = create({ version: 1, options, multiSelect: true });
@@ -75,7 +88,7 @@ try {
   assert.equal(await choiceButtons.nth(1).getAttribute("aria-pressed"), "true");
   assert.equal(bd("comments", multiple, "--json").length, 0, "selection taps do not submit a multi-select question");
   await panel.getByRole("button", { name: "Respond", exact: true }).click();
-  await panel.waitFor({ state: "detached" });
+  await written(panel, multiple);
   assert.deepEqual(parseSelection(answer(multiple).text).map((c) => c.id), ["blue", "green"]);
 
   for (const detail of [false, true]) {
@@ -85,7 +98,7 @@ try {
     assert.equal(await declineButton.isDisabled(), true, "decline requires a reason");
     await panel.getByRole("textbox", { name: "Write an answer" }).fill("The premise is wrong.");
     await declineButton.click();
-    await panel.waitFor({ state: "detached" });
+    await written(panel, declined);
     assert.equal(bd("show", declined, "--json")[0].close_reason, "Declined");
     assert.match(answer(declined).text, /^The person declined this question: The premise is wrong\./);
   }

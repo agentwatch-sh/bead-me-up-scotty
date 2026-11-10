@@ -7,8 +7,6 @@ import {
 import { toast } from "sonner";
 import { toastError } from "@/components/error-toast";
 import { api, type BeadsResponse } from "@/lib/api-client";
-import type { HumanChoice, QuestionAnswer } from "@/lib/human-choices";
-import type { HumanBody } from "@/lib/human-validate";
 import type { Bead, CreateInput, UpdateInput, DepType } from "@/lib/schema";
 import { useApp } from "@/components/app-context";
 
@@ -19,7 +17,12 @@ export const activityKey = (projectId: string) => ["activity", projectId] as con
 export function useBeads(projectId: string) {
   return useQuery({
     queryKey: beadsKey(projectId),
-    queryFn: () => api.list(projectId),
+    // When the list was requested: the answer outbox keeps an answered item out
+    // of a list that was requested before its write was done (age-6mk).
+    queryFn: async () => {
+      const startedAt = Date.now();
+      return { ...(await api.list(projectId)), startedAt };
+    },
     refetchInterval: (q) => q.state.data?.meta.pollIntervalMs ?? 5000,
   });
 }
@@ -194,72 +197,10 @@ export function useCreateGate() {
   );
 }
 
-/** "Needs You" inbox: respond or dismiss, optionally with an immutable choice snapshot. */
-export function useRespondHuman() {
-  const { projectId } = useApp();
-  const qc = useQueryClient();
-  return useMutation(
-    mutationToast<{ id: string; text: string; choice?: HumanChoice; choices?: HumanChoice[]; note?: string }, Bead>(
-      ({ id, text, choice, choices, note }) => api.human.respond(projectId, id, text, choice, choices, note),
-      (a) => `Responded to ${a.id}`,
-      qc,
-      beadsKey(projectId),
-    ),
-  );
-}
-
-export function useSubmitQuestions() {
-  const { projectId } = useApp();
-  const qc = useQueryClient();
-  return useMutation(
-    mutationToast<{ id: string; action: "respond" | "dismiss"; answers: QuestionAnswer[] }, Bead>(
-      ({ id, action, answers }) => api.human.submit(projectId, id, action, answers),
-      (a) => `Answered ${a.id}`,
-      qc,
-      beadsKey(projectId),
-    ),
-  );
-}
-
-export function useDeclineHuman() {
-  const { projectId } = useApp();
-  const qc = useQueryClient();
-  return useMutation(
-    mutationToast<{ id: string; text: string }, Bead>(
-      ({ id, text }) => api.human.decline(projectId, id, text),
-      (a) => `Declined ${a.id}`,
-      qc,
-      beadsKey(projectId),
-    ),
-  );
-}
-
-export function useDismissHuman() {
-  const { projectId } = useApp();
-  const qc = useQueryClient();
-  return useMutation(
-    mutationToast<{ id: string; choice?: HumanChoice; note?: string }, Bead>(
-      ({ id, choice, note }) => api.human.dismiss(projectId, id, choice, note),
-      (a) => `Dismissed ${a.id}`,
-      qc,
-      beadsKey(projectId),
-    ),
-  );
-}
-
-/** To Review: keep a manager's answer. */
-export function useAcceptReview() {
-  const { projectId } = useApp();
-  const qc = useQueryClient();
-  return useMutation(
-    mutationToast<{ id: string }, Bead>(
-      ({ id }) => api.review.accept(projectId, id),
-      (a) => `Accepted the answer to ${a.id}`,
-      qc,
-      beadsKey(projectId),
-    ),
-  );
-}
+// The Needs You answers (respond, dismiss, decline, a group of answers) and the
+// To Review verdicts (accept, reverse) go through the answer outbox
+// (components/answer-outbox.tsx): the item leaves its list at the click, and a
+// failed write brings it back with its error and the typed text (age-6mk).
 
 /**
  * To Review: a comment on a manager's answer, with no verdict. It is a plain
@@ -277,28 +218,6 @@ export function useCommentReview() {
       beadsKey(projectId),
     ),
   );
-}
-
-/** To Review: replace a manager's answer with the operator's own. */
-export function useReverseReview() {
-  const { projectId } = useApp();
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, answer }: { id: string; answer: HumanBody }) => api.review.reverse(projectId, id, answer),
-    onSuccess: (res, { id }) => {
-      // The route answers 200 with a warning when the answer was saved but the review record was not.
-      if (res.warning === "review_record_failed") {
-        toast.warning(`Your answer to ${id} went to the agent, but the review record was not saved.`, {
-          duration: Infinity,
-          closeButton: true,
-        });
-      } else {
-        toast.success(`Reversed the answer to ${id}`);
-      }
-      qc.invalidateQueries({ queryKey: beadsKey(projectId) });
-    },
-    onError: (err: unknown) => toastError(err),
-  });
 }
 
 export function useArchiveBead() {

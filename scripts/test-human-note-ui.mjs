@@ -41,13 +41,26 @@ try {
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   const page = await context.newPage();
   page.on("pageerror", (error) => errors.push(error.message));
+  // A list export already running when the item was created can answer without it
+  // (as in test-review-ui.mjs): load again until the item shows.
   const visit = async (id, detail = false) => {
-    await page.goto(`${base}/p/choices?${detail ? `bead=${id}` : "view=needsyou"}`);
     const panel = page.locator(`[data-human-answer="${id}"]`);
-    await panel.getByRole("button", { name: /Dismiss|Respond/ }).first().waitFor();
-    return panel;
+    for (let attempt = 1; ; attempt++) {
+      await page.goto(`${base}/p/choices?${detail ? `bead=${id}` : "view=needsyou"}`);
+      try {
+        await panel.getByRole("button", { name: /Dismiss|Respond/ }).first().waitFor({ timeout: 8000 });
+        return panel;
+      } catch (e) {
+        if (attempt === 4) throw e;
+      }
+    }
   };
   const write = (panel, text) => panel.getByRole("textbox", { name: "Write an answer" }).fill(text);
+  // The card leaves at the click (agentwatch age-6mk): the write is done when its confirmation shows.
+  const written = async (panel, id) => {
+    await panel.waitFor({ state: "detached" });
+    await page.locator("[data-sonner-toast]").filter({ hasText: id }).filter({ hasNotText: "Sending" }).first().waitFor();
+  };
 
   // A tap on an option sends the comment with it, in the inbox and in the drawer.
   for (const [detail, label, id] of [[false, /^Use green/, "green"], [true, /Use blue Recommended/, "blue"]]) {
@@ -56,7 +69,7 @@ try {
     await write(panel, NOTE);
     await panel.getByText("Your comment goes with the option you tap.", { exact: true }).waitFor();
     await panel.getByRole("group", { name: "Answer choices" }).getByRole("button", { name: label }).click();
-    await panel.waitFor({ state: "detached" });
+    await written(panel, item);
     assert.equal(parseChoice(answer(item).text).id, id);
     assert.equal(parseNote(answer(item).text), NOTE);
     assert.equal(answer(item).author, "human:selden");
@@ -75,7 +88,7 @@ try {
     assert.equal(await panel.getByRole("textbox", { name: "Write an answer" }).inputValue(), NOTE, "a failed write keeps the comment");
     await page.unroute(`**/beads/${item}/human`);
     await panel.getByRole("button", { name: /^Use green/ }).click();
-    await panel.waitFor({ state: "detached" });
+    await written(panel, item);
     assert.equal(parseNote(answer(item).text), NOTE);
   }
 
@@ -86,7 +99,7 @@ try {
     await write(panel, NOTE);
     await panel.getByText("Dismiss uses: Use blue. Your comment goes with it.", { exact: true }).waitFor();
     await panel.getByRole("button", { name: "Dismiss", exact: true }).click();
-    await panel.waitFor({ state: "detached" });
+    await written(panel, item);
     assert.equal(parseChoice(answer(item).text).id, "blue");
     assert.equal(parseNote(answer(item).text), NOTE);
     assert.equal(reason(item), "Dismissed");
@@ -102,7 +115,7 @@ try {
     await write(panel, NOTE);
     await panel.getByText("Respond sends the selected options with your comment.", { exact: true }).waitFor();
     await panel.getByRole("button", { name: "Respond", exact: true }).click();
-    await panel.waitFor({ state: "detached" });
+    await written(panel, item);
     assert.deepEqual(parseSelection(answer(item).text).map((c) => c.id), ["blue", "green"]);
     assert.equal(parseNote(answer(item).text), NOTE);
   }
@@ -113,7 +126,7 @@ try {
     const panel = await visit(item);
     await write(panel, NOTE);
     await panel.getByRole("button", { name: "Dismiss", exact: true }).click();
-    await panel.waitFor({ state: "detached" });
+    await written(panel, item);
     assert.equal(answer(item).text, NOTE);
     assert.equal(reason(item), "Dismissed");
   }
@@ -124,7 +137,7 @@ try {
     const panel = await visit(item);
     await write(panel, "The premise is wrong.");
     await panel.getByRole("button", { name: "Decline question", exact: true }).click();
-    await panel.waitFor({ state: "detached" });
+    await written(panel, item);
     assert.match(answer(item).text, /^The person declined this question: The premise is wrong\./);
     assert.equal(reason(item), "Declined");
   }
@@ -139,7 +152,7 @@ try {
     await panel.locator('[data-question-id="q1"]').getByText("Your comment goes with the selected options.", { exact: true }).waitFor();
     await panel.locator('[data-question-id="q2"]').getByRole("button", { name: /^Use green/ }).click();
     await panel.getByRole("button", { name: "Respond", exact: true }).click();
-    await panel.waitFor({ state: "detached" });
+    await written(panel, item);
     const group = parseGroup(answer(item).text);
     assert.deepEqual(group.map((a) => [a.choices.map((c) => c.id), a.note]), [[["blue"], "Keep the logo."], [["green"], undefined]]);
 
@@ -147,7 +160,7 @@ try {
     panel = await visit(dismissed);
     await panel.getByRole("textbox", { name: "Answer for Format" }).fill("Plain text is fine.");
     await panel.getByRole("button", { name: "Dismiss", exact: true }).click();
-    await panel.waitFor({ state: "detached" });
+    await written(panel, dismissed);
     const kept = parseGroup(answer(dismissed).text);
     assert.deepEqual(kept.map((a) => [a.choices.map((c) => c.id), a.note]), [[["blue"], undefined], [["blue"], "Plain text is fine."]]);
     assert.equal(reason(dismissed), "Dismissed");

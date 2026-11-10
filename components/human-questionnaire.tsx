@@ -1,25 +1,42 @@
 "use client";
 import * as React from "react";
 import { useApp } from "@/components/app-context";
-import { useSubmitQuestions } from "@/hooks/use-beads";
-import { useAnswerSubmit, type AnswerSubmit } from "@/hooks/use-answer-submit";
-import { humanBody } from "@/lib/api-client";
+import { failedDraft, useAnswerOutbox, type AnswerRoute } from "@/components/answer-outbox";
+import { api, humanBody } from "@/lib/api-client";
 import type { Bead } from "@/lib/schema";
 import type { HumanChoice, HumanQuestion, QuestionAnswer } from "@/lib/human-choices";
 
 type Draft = { selected: HumanChoice[]; text: string; declined: boolean };
+type Drafts = Record<string, Draft>;
 
-export function HumanQuestionnaire({ bead, initialQuestions, submit: override, disabled: held }: { bead: Bead; initialQuestions: HumanQuestion[]; submit?: AnswerSubmit; disabled?: boolean }) {
-  const { readOnly } = useApp();
-  const submit = useSubmitQuestions();
-  const sink = useAnswerSubmit(override);
-  const send = (action: "respond" | "dismiss", list: QuestionAnswer[]) => override
-    ? sink.run(humanBody.submit(action, list))
-    : submit.mutate({ id: bead.id, action, answers: list });
+/** The drafts a failed write left, when they fit these questions. */
+const draftsFor = (questions: HumanQuestion[]) => (value: unknown): value is Drafts =>
+  !!value && typeof value === "object" && questions.every((q) => {
+    const draft = (value as Drafts)[q.id];
+    return !!draft && Array.isArray(draft.selected) && typeof draft.text === "string" && typeof draft.declined === "boolean";
+  });
+
+export function HumanQuestionnaire({ bead, initialQuestions, route, disabled: held }: { bead: Bead; initialQuestions: HumanQuestion[]; route?: AnswerRoute; disabled?: boolean }) {
+  const { readOnly, projectId } = useApp();
+  const outbox = useAnswerOutbox();
+  const entry = outbox.entry(bead.id);
   // Keep the shown questions and chosen snapshots stable until a refresh. The server rejects stale submissions.
   const [questions] = React.useState(initialQuestions);
-  const [drafts, setDrafts] = React.useState<Record<string, Draft>>(() => Object.fromEntries(questions.map((q) => [q.id, { selected: [], text: "", declined: false }])));
-  const disabled = readOnly || !!held || sink.pending || submit.isPending || (!override && bead.status === "closed");
+  // The item leaves its list at the click (the answer outbox); a failed write
+  // brings it back here with its error and every question's draft.
+  const [drafts, setDrafts] = React.useState<Drafts>(() => failedDraft(entry, draftsFor(questions))
+    ?? Object.fromEntries(questions.map((q) => [q.id, { selected: [], text: "", declined: false }])));
+  const send = (action: "respond" | "dismiss", list: QuestionAnswer[]) => {
+    const body = humanBody.submit(action, list);
+    void outbox.send({
+      id: bead.id,
+      kind: route?.kind ?? (action === "dismiss" ? "dismiss" : "answers"),
+      request: () => (route ? route.request(body) : api.human.answer(projectId, bead.id, body)),
+      draft: drafts,
+      warning: route?.warning,
+    });
+  };
+  const disabled = readOnly || !!held || entry?.state === "sending" || (!route && bead.status === "closed");
   const update = (id: string, change: (draft: Draft) => Draft) => setDrafts((previous) => ({ ...previous, [id]: change(previous[id]) }));
   const answers = questions.map((q): QuestionAnswer | null => {
     const draft = drafts[q.id];
@@ -39,7 +56,7 @@ export function HumanQuestionnaire({ bead, initialQuestions, submit: override, d
     return { id: q.id, question: q.question, header: q.header, multiSelect: q.multiSelect, action: "responded",
       choices: [{ version: 1, ...q.options[0] }], text: null, ...(text ? { note: text } : {}) };
   });
-  const error = sink.error ?? (submit.error instanceof Error ? submit.error.message : submit.error ? "The answers could not be saved." : null);
+  const error = entry?.state === "failed" ? entry.error : null;
 
   return (
     <div data-human-answer={bead.id} className="min-w-0">

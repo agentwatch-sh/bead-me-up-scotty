@@ -50,6 +50,11 @@ try {
     throw new Error(`rows did not show: ${ids.join(", ")}`);
   };
   const row = (id) => page.locator(`[data-review-row="${id}"]`);
+  // The row leaves at the click (agentwatch age-6mk): the write is done when its confirmation shows.
+  const written = async (id) => {
+    await row(id).waitFor({ state: "detached" });
+    await page.locator("[data-sonner-toast]").filter({ hasText: id }).filter({ hasNotText: "Sending" }).first().waitFor();
+  };
   const painted = () => page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
   // Load a page and wait until the bead list has arrived and rendered.
   const load = async (query) => {
@@ -87,7 +92,7 @@ try {
   const accept = row(one).getByRole("button", { name: "Accept", exact: true });
   await accept.focus();
   await page.keyboard.press("Enter");
-  await row(one).waitFor({ state: "detached" });
+  await written(one);
   assert.equal(show(one).metadata["board.review"], "accepted");
   assert.equal(show(one).metadata["board.reviewed_by"], "human:selden");
   assert.ok(show(one).metadata["board.reviewed_at"]);
@@ -106,7 +111,7 @@ try {
   }
   assert.ok(reached, "Tab reaches Accept");
   await page.keyboard.press("Enter");
-  await row(tabbed).waitFor({ state: "detached" });
+  await written(tabbed);
   assert.equal(show(tabbed).metadata["board.review"], "accepted");
 
   // Accept all asks once, then accepts every pending row, one request each.
@@ -123,7 +128,10 @@ try {
   page.once("dialog", async (d) => { dialogs.push(d.message()); await d.accept(); });
   await page.getByRole("button", { name: "Accept all (3)" }).click();
   try {
-    for (const id of many) await row(id).waitFor({ state: "detached", timeout: 90000 }); // three bd writes in a row
+    // Every row leaves at the confirm (agentwatch age-6mk); then each accept's confirmation,
+    // in whatever order the rows are sent.
+    for (const id of many) await row(id).waitFor({ state: "detached", timeout: 5000 });
+    await Promise.all(many.map((id) => page.locator("[data-sonner-toast]").filter({ hasText: `Accepted the answer to ${id}` }).waitFor({ timeout: 90000 }))); // three bd writes in a row
   } catch (e) {
     const alerts = await page.getByRole("alert").allInnerTexts();
     throw new Error(`Accept all did not clear the rows; alerts: ${JSON.stringify(alerts)}; reviews: ${many.map((id) => show(id).metadata["board.review"])}; posts: ${requests.length}`, { cause: e });
@@ -139,7 +147,7 @@ try {
   await row(rev).getByText("Your answer replaces the manager's. The asking agent gets it as a new answer from you.").waitFor();
   const panel = row(rev).locator(`[data-human-answer="${rev}"]`);
   await panel.getByRole("button", { name: /Use green/ }).click();
-  await row(rev).waitFor({ state: "detached" });
+  await written(rev);
   const reversed = show(rev);
   assert.equal(reversed.status, "closed");
   assert.equal(reversed.metadata["board.review"], "reversed");
@@ -156,7 +164,7 @@ try {
   assert.equal(await row(freeId).getByRole("button", { name: "Dismiss", exact: true }).count(), 0, "no Dismiss without options");
   await row(freeId).getByRole("textbox", { name: "Write an answer" }).fill("Ship on Monday.");
   await row(freeId).getByRole("button", { name: "Respond", exact: true }).click();
-  await row(freeId).waitFor({ state: "detached" });
+  await written(freeId);
   assert.equal(comments(freeId).at(-1).text, "Ship on Monday.");
   assert.equal(show(freeId).metadata["board.review"], "reversed");
 
@@ -257,7 +265,7 @@ try {
   assert.match(await row(dismissedId).innerText(), /Manager's answer\s+Dismissed \(Use blue\)/);
   run("human:selden", ["update", dismissedId, "--set-metadata", "board.review=accepted"]);
 
-  // A Reverse that did not start keeps the row, the error and what was typed.
+  // A Reverse that did not start brings the row back, with its panel, the error and what was typed.
   const failing = managerAnswered("Ship later?", { free: true });
   await open(failing);
   await row(failing).getByRole("button", { name: "Reverse", exact: true }).click();
@@ -268,7 +276,7 @@ try {
   await row(failing).getByRole("alert").waitFor();
   assert.match(await row(failing).getByRole("alert").innerText(), /did not start/);
   assert.equal(await input.inputValue(), "Not on Friday.", "the typed answer stays");
-  assert.equal(await row(failing).count(), 1, "the row stays");
+  assert.equal(await row(failing).count(), 1, "the row is back");
   await page.unroute(`**/beads/${failing}/review`);
   assert.equal(show(failing).metadata["board.review"], "pending");
 

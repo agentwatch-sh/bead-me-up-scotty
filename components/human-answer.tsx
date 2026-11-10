@@ -3,47 +3,56 @@ import * as React from "react";
 import { HumanQuestionnaire } from "@/components/human-questionnaire";
 import { useApp } from "@/components/app-context";
 import { Icon } from "@/components/icons";
-import { useRespondHuman, useDismissHuman, useDeclineHuman } from "@/hooks/use-beads";
-import { useAnswerSubmit, type AnswerSubmit } from "@/hooks/use-answer-submit";
-import { humanBody } from "@/lib/api-client";
+import { failedDraft, useAnswerOutbox, type AnswerRoute } from "@/components/answer-outbox";
+import { api, humanBody } from "@/lib/api-client";
+import type { OutboxKind } from "@/lib/answer-outbox";
 import { parseQuestions, parseChoices, renderChoice, isMultiSelect, renderSelection, type HumanChoice } from "@/lib/human-choices";
+import type { HumanBody } from "@/lib/human-validate";
 import type { Bead } from "@/lib/schema";
 
 /** Shared answer controls for the inbox and item detail. */
-export function HumanAnswer({ bead, submit, disabled }: { bead: Bead; submit?: AnswerSubmit; disabled?: boolean }) {
+export function HumanAnswer({ bead, route, disabled }: { bead: Bead; route?: AnswerRoute; disabled?: boolean }) {
   const questions = parseQuestions(bead.metadata?.["scotty.choices"]);
-  return questions ? <HumanQuestionnaire key={bead.id} bead={bead} initialQuestions={questions} submit={submit} disabled={disabled} /> : <SingleHumanAnswer key={bead.id} bead={bead} submit={submit} disabled={disabled} />;
+  return questions ? <HumanQuestionnaire key={bead.id} bead={bead} initialQuestions={questions} route={route} disabled={disabled} /> : <SingleHumanAnswer key={bead.id} bead={bead} route={route} disabled={disabled} />;
 }
 
-function SingleHumanAnswer({ bead, submit, disabled: held }: { bead: Bead; submit?: AnswerSubmit; disabled?: boolean }) {
-  const { readOnly } = useApp();
-  const respond = useRespondHuman();
-  const dismiss = useDismissHuman();
-  const decline = useDeclineHuman();
-  const override = useAnswerSubmit(submit);
-  const [selected, setSelected] = React.useState<HumanChoice[]>([]);
+/** What the form held when it sent; a failed write brings it back. */
+type SingleDraft = { text: string; selected: HumanChoice[] };
+const isSingleDraft = (draft: unknown): draft is SingleDraft =>
+  !!draft && typeof draft === "object" && typeof (draft as SingleDraft).text === "string" && Array.isArray((draft as SingleDraft).selected);
+
+function SingleHumanAnswer({ bead, route, disabled: held }: { bead: Bead; route?: AnswerRoute; disabled?: boolean }) {
+  const { readOnly, projectId } = useApp();
+  const outbox = useAnswerOutbox();
+  const entry = outbox.entry(bead.id);
+  // The item leaves its list at the click (the answer outbox); a failed write
+  // brings it back here with its error and what was typed.
+  const restored = failedDraft(entry, isSingleDraft);
+  const [selected, setSelected] = React.useState<HumanChoice[]>(() => restored?.selected ?? []);
   const selectedIds = selected.map((choice) => choice.id);
-  const [text, setText] = React.useState("");
+  const [text, setText] = React.useState(() => restored?.text ?? "");
   const options = parseChoices(bead.metadata?.["scotty.choices"]);
   const multiSelect = isMultiSelect(bead.metadata?.["scotty.choices"]);
   const recommended: HumanChoice | undefined = options ? { version: 1, ...options[0] } : undefined;
-  // With an override the item is closed on purpose (a Reverse answers a closed item).
-  const disabled = readOnly || !!held || override.pending || respond.isPending || dismiss.isPending || decline.isPending || (!submit && bead.status === "closed");
-  const error = respond.error || dismiss.error || decline.error;
-  const errorMessage = override.error ?? (error instanceof Error ? error.message : error ? "The answer could not be saved." : null);
+  // With a route the item is closed on purpose (a Reverse answers a closed item).
+  const disabled = readOnly || !!held || entry?.state === "sending" || (!route && bead.status === "closed");
+  const errorMessage = entry?.state === "failed" ? entry.error : null;
   // What the person typed goes with every answer: a tapped option, the selections, Dismiss.
-  // It stays in the box until the write succeeds (the item then leaves); a failed write keeps it.
   const note = text.trim() || undefined;
-  // Each action goes to the override when there is one, else to the human route.
-  const sendRespond = (text: string, choice?: HumanChoice, choices?: HumanChoice[], note?: string) => submit
-    ? override.run(humanBody.respond(text, choice, choices, note))
-    : respond.mutate({ id: bead.id, text, choice, choices, note });
-  const sendDecline = (text: string) => submit ? override.run(humanBody.decline(text)) : decline.mutate({ id: bead.id, text });
-  const sendDismiss = () => submit
-    ? override.run(humanBody.dismiss(recommended, note))
-    : dismiss.mutate({ id: bead.id, choice: recommended, note });
+  // Each action goes to the route when there is one, else to the human route.
+  const send = (kind: OutboxKind, body: HumanBody) => void outbox.send({
+    id: bead.id,
+    kind: route?.kind ?? kind,
+    request: () => (route ? route.request(body) : api.human.answer(projectId, bead.id, body)),
+    draft: { text, selected } satisfies SingleDraft,
+    warning: route?.warning,
+  });
+  const sendRespond = (text: string, choice?: HumanChoice, choices?: HumanChoice[], note?: string) =>
+    send("respond", humanBody.respond(text, choice, choices, note));
+  const sendDecline = (text: string) => send("decline", humanBody.decline(text));
+  const sendDismiss = () => send("dismiss", humanBody.dismiss(recommended, note));
   // The review route refuses a Dismiss with no option to record.
-  const showDismiss = !submit || !!recommended;
+  const showDismiss = !route || !!recommended;
 
   return (
     <div data-human-answer={bead.id} className="min-w-0">
