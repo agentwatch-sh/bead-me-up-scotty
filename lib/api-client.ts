@@ -195,7 +195,7 @@ export const api = {
     method: "PUT", body: JSON.stringify({ readOnly }),
   }),
   list: (projectId: string) => request<BeadsResponse>(`${base(projectId)}/beads`),
-  get: (projectId: string, id: string) => request<Bead>(`${base(projectId)}/beads/${enc(id)}`),
+  get: (projectId: string, id: string, signal?: AbortSignal) => request<Bead>(`${base(projectId)}/beads/${enc(id)}`, { signal }),
   create: (projectId: string, input: CreateInput) =>
     request<Bead>(`${base(projectId)}/beads`, { method: "POST", body: JSON.stringify(input) }),
   update: (projectId: string, id: string, patch: UpdateInput) =>
@@ -248,24 +248,27 @@ export const api = {
   // Act on a "Needs You" (human-labelled) bead, mirroring `bd human`.
   // The body comes from `humanBody` (respond, dismiss, decline, a group of answers).
   human: {
-    answer: (projectId: string, id: string, body: HumanBody) =>
+    answer: (projectId: string, id: string, body: HumanBody, signal?: AbortSignal) =>
       request<Bead>(`${base(projectId)}/beads/${enc(id)}/human`, {
         method: "POST",
         body: JSON.stringify(body),
+        signal,
       }),
   },
 
   // Review a manager's answer to an agent's question: keep it, or reverse it.
   review: {
-    accept: (projectId: string, id: string) =>
+    accept: (projectId: string, id: string, signal?: AbortSignal) =>
       request<Bead>(`${base(projectId)}/beads/${enc(id)}/review`, {
         method: "POST",
         body: JSON.stringify({ action: "accept" }),
+        signal,
       }),
-    reverse: (projectId: string, id: string, answer: HumanBody) =>
+    reverse: (projectId: string, id: string, answer: HumanBody, signal?: AbortSignal) =>
       request<Bead & { warning?: string }>(`${base(projectId)}/beads/${enc(id)}/review`, {
         method: "POST",
         body: JSON.stringify({ action: "reverse", answer }),
+        signal,
       }),
   },
 

@@ -106,3 +106,73 @@ export function outboxText(kind: OutboxKind, id: string): { sending: string; don
       return { sending: `Sending your answer to ${id}…`, done: `Reversed the answer to ${id}` };
   }
 }
+
+/** The key of an item in the outbox: per project, so two boards' items with the same id never meet. */
+export function outboxKey(projectId: string, id: string): string {
+  return JSON.stringify([projectId, id]);
+}
+
+/** How long the page waits for the board to take an answer; then the item comes back. */
+export const ANSWER_TIMEOUT_MS = 30_000;
+
+/**
+ * The list, with `startedAt`: when it was requested (`now()` before the request,
+ * not when it answers). A list requested before an answer's 2xx is older than
+ * the answer, also when it arrives after it (see `isHidden`).
+ */
+export async function listWithStart<T extends object>(fetchList: () => Promise<T>, now: () => number = Date.now): Promise<T & { startedAt: number }> {
+  const startedAt = now();
+  return { ...(await fetchList()), startedAt };
+}
+
+/** The failed entry, when it is of one of `kinds`: an error shows only in the form of its own kind. */
+export function failureFor(entry: OutboxEntry | undefined, kinds: readonly OutboxKind[]): Extract<OutboxEntry, { state: "failed" }> | undefined {
+  return entry?.state === "failed" && kinds.includes(entry.kind) ? entry : undefined;
+}
+
+type Failure = { name?: unknown; status?: unknown; message?: unknown };
+const failure = (e: unknown): Failure => (e && typeof e === "object" ? (e as Failure) : {});
+/** No answer came: the connection failed, or the page stopped waiting. */
+const noAnswer = (e: unknown) => ["TypeError", "AbortError", "TimeoutError"].includes(String(failure(e).name));
+
+/**
+ * Can the write have happened although the request failed? When no answer came
+ * (a dropped connection, the time limit) or the board failed on its side (5xx),
+ * yes: the item is read again to tell. A refusal (4xx: a stale question, no
+ * password login) wrote nothing.
+ */
+export function mayHaveLanded(e: unknown): boolean {
+  const status = failure(e).status;
+  return noAnswer(e) || (typeof status === "number" && status >= 500);
+}
+
+/** The words the item shows for a failed write. */
+export function failureText(e: unknown): string {
+  const name = String(failure(e).name);
+  if (name === "TimeoutError") return `The board did not answer within ${ANSWER_TIMEOUT_MS / 1000} s. Try again.`;
+  if (noAnswer(e)) return "The answer did not reach the board: the connection failed. Try again.";
+  const message = failure(e).message;
+  return typeof message === "string" && message ? message : "The answer could not be saved.";
+}
+
+/** Does the item, read again, show that this answer was written? */
+export function answerLanded(kind: OutboxKind, bead: Partial<Bead> | null | undefined): boolean {
+  if (!bead) return false;
+  const closedAs = (reason: string) => bead.status === "closed" && bead.close_reason === reason;
+  switch (kind) {
+    case "respond":
+    case "answers":
+      return closedAs("Responded");
+    case "dismiss":
+      return closedAs("Dismissed");
+    case "decline":
+      return closedAs("Declined");
+    case "accept":
+      return bead.metadata?.["board.review"] === "accepted";
+    case "reverse":
+      return bead.metadata?.["board.review"] === "reversed";
+  }
+}
+
+/** The kinds of the Needs You answers; a form with a route (a Reverse) shows its route's kind only. */
+export const HUMAN_KINDS: readonly OutboxKind[] = ["respond", "dismiss", "decline", "answers"];

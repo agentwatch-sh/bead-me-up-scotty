@@ -20,6 +20,8 @@ const run = (actor, args) => execFileSync(bin, args, { cwd: repo, encoding: "utf
 const bd = (...args) => JSON.parse(run("agent:test", args));
 const show = (id) => bd("show", id, "--json")[0];
 const comments = (id) => bd("comments", id, "--json");
+// The operator's answer comments on an item.
+const mine = (id) => comments(id).filter((c) => c.author === "human:selden");
 // The server's bd: wait before a command, or fail one command on one item.
 const slow = (command, seconds) => fs.writeFileSync(path.join(control, `delay-${command}`), String(seconds));
 const fast = (command) => fs.rmSync(path.join(control, `delay-${command}`), { force: true });
@@ -150,7 +152,7 @@ try {
     const ms = await leaves(panel, () => panel.getByRole("button", { name: "Respond", exact: true }).click());
     assert.ok(ms < 1000, `the card left ${ms} ms after the click`);
     await panelOf(item).getByRole("alert").waitFor();
-    assert.match(await panelOf(item).getByRole("alert").innerText(), /The test refused this write\./);
+    assert.equal(await panelOf(item).getByRole("alert").innerText(), "Your answer is saved; closing failed: try again.", "the answer is saved; only the close failed");
     assert.equal(await panelOf(item).getByRole("textbox", { name: "Write an answer" }).inputValue(), "Ship on Monday.", "the typed text is back");
     assert.equal(show(item).status, "open", "the item is still open");
     // The retry goes through.
@@ -159,7 +161,8 @@ try {
     await leaves(panelOf(item), () => panelOf(item).getByRole("button", { name: "Respond", exact: true }).click());
     await toast(`Responded to ${item}`).waitFor();
     assert.equal(show(item).close_reason, "Responded");
-    console.log("PASS answer speed: a failed close brings the card back with its error and the typed text; the retry closes it");
+    assert.equal(mine(item).length, 1, "one answer comment after the failed close and the retry");
+    console.log("PASS answer speed: a failed close brings the card back saying the answer is saved; the retry only closes (one answer comment)");
   }
 
   // ---- A group of questions: out at the click; a failure keeps every question's draft ----
@@ -175,6 +178,7 @@ try {
     const ms = await leaves(panel, () => panel.getByRole("button", { name: "Respond", exact: true }).click());
     assert.ok(ms < 1000, `the group left ${ms} ms after the click`);
     await panelOf(item).getByRole("alert").waitFor();
+    assert.equal(await panelOf(item).getByRole("alert").innerText(), "Your answer is saved; closing failed: try again.");
     assert.equal(await panelOf(item).getByRole("textbox", { name: "Answer for Theme" }).inputValue(), "Keep the logo.");
     assert.equal(await panelOf(item).locator('[data-question-id="q1"]').getByRole("button", { name: /^Use green/ }).getAttribute("aria-pressed"), "true", "the chosen option is back");
     allow("close", item);
@@ -184,7 +188,8 @@ try {
     await toast(`Answered ${item}`).waitFor({ timeout: 30000 });
     fast("close");
     assert.equal(show(item).close_reason, "Responded");
-    console.log("PASS answer speed: a group of questions leaves at the click; a failure keeps every draft");
+    assert.equal(mine(item).length, 1, "one answer comment for the group after the failed close and the retry");
+    console.log("PASS answer speed: a group of questions leaves at the click; a failure keeps every draft; one answer comment after the retry");
   }
 
   // ---- Decline and Dismiss leave at the click too ----
@@ -200,6 +205,62 @@ try {
     assert.equal(show(item).close_reason, reason);
   }
   console.log("PASS answer speed: Decline and Dismiss leave at the click");
+
+  // ---- Refusals, a dropped connection and a hung request: the card comes back (review I2, I3) ----
+  {
+    const typed = "Ship it on Monday.";
+    const cases = [
+      ["the proxy refuses an agent's login (403)", (route) => route.fulfill({ status: 403, json: { error: "Answers and comments need the operator's password login.", error_code: "password_login_required" } }), /need the operator's password login/],
+      ["the board says the question is stale (409)", (route) => route.fulfill({ status: 409, json: { error: "This question is no longer waiting for an answer.", code: "stale_question" } }), /no longer waiting for an answer/],
+      ["the proxy answers 409 with its login chooser page", (route) => route.fulfill({ status: 409, contentType: "text/html", body: "<html>Choose a board</html>" }), /Request failed \(409\)/],
+      ["the connection drops", (route) => route.abort("failed"), /did not reach the board: the connection failed/],
+      ["the request hangs", () => {}, /did not answer within 30 s/],
+    ];
+    for (const [name, answerWith, expected] of cases) {
+      const item = create(`Refused: ${name}?`, null);
+      const panel = await visit(item);
+      await panel.getByRole("textbox", { name: "Write an answer" }).fill(typed);
+      const pending = [];
+      // The answer comes 1.5 s later, so the test sees the card leave and then come back.
+      await page.route(`**/beads/${item}/human`, async (route) => {
+        pending.push(route);
+        await new Promise((done) => setTimeout(done, 1500));
+        return answerWith(route);
+      });
+      const ms = await leaves(panel, () => panel.getByRole("button", { name: "Respond", exact: true }).click());
+      assert.ok(ms < 1000, `${name}: the card left ${ms} ms after the click`);
+      await panelOf(item).getByRole("alert").waitFor({ timeout: 45000 });
+      assert.match(await panelOf(item).getByRole("alert").innerText(), expected, name);
+      assert.equal(await panelOf(item).getByRole("textbox", { name: "Write an answer" }).inputValue(), typed, `${name}: the typed text is back`);
+      assert.equal(mine(item).length, 0, `${name}: nothing was written`);
+      // An edit deals with the failure: its error goes (review M2).
+      await panelOf(item).getByRole("textbox", { name: "Write an answer" }).fill(`${typed} Edited.`);
+      await panelOf(item).getByRole("alert").waitFor({ state: "detached" });
+      await page.unroute(`**/beads/${item}/human`);
+      for (const route of pending) await route.abort().catch(() => {});
+    }
+    console.log("PASS answer speed: a 403, a 409 (JSON and HTML), a dropped connection and a hung request bring the card back with its error and the typed text; an edit clears the error");
+  }
+
+  // ---- The board wrote the answer, but its response was lost: the answer is sent (review M1) ----
+  {
+    const item = create("Lost response?", null);
+    const panel = await visit(item);
+    await panel.getByRole("textbox", { name: "Write an answer" }).fill("Ship it.");
+    await page.route(`**/beads/${item}/human`, async (route) => {
+      await route.fetch(); // the board takes the answer
+      await route.abort("failed"); // and the page never hears it
+    });
+    await leaves(panel, () => panel.getByRole("button", { name: "Respond", exact: true }).click());
+    await toast(`Responded to ${item}`).waitFor();
+    await painted();
+    assert.equal(await panelOf(item).count(), 0, "the card stays out");
+    assert.equal(await page.getByRole("alert").filter({ hasText: /did not reach the board/ }).count(), 0, "no error");
+    await page.unroute(`**/beads/${item}/human`);
+    assert.equal(show(item).close_reason, "Responded");
+    assert.equal(mine(item).length, 1);
+    console.log("PASS answer speed: a lost response after the board wrote the answer reads as sent, with no error");
+  }
 
   // ---- The detail drawer: the form gives way to "Sending your answer…" ----
   {
@@ -241,6 +302,11 @@ try {
     assert.ok(ms < 1000, `the failing Accept row left ${ms} ms after the click`);
     await row(refused).getByRole("alert").waitFor();
     assert.match(await row(refused).getByRole("alert").innerText(), /The test refused this write\./);
+    // Another action deals with the failure: the Reverse form never shows the Accept's error (review M2).
+    await row(refused).getByRole("button", { name: "Reverse", exact: true }).click();
+    await row(refused).locator(`[data-human-answer="${refused}"]`).waitFor();
+    assert.equal(await row(refused).getByRole("alert").count(), 0, "the Accept's error is gone when Reverse opens");
+    await row(refused).getByRole("button", { name: "Cancel", exact: true }).click();
     allow("update", refused);
     run("human:selden", ["update", refused, "--set-metadata", "board.review=accepted"]);
 

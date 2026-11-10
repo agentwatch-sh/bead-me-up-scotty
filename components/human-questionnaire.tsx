@@ -3,6 +3,7 @@ import * as React from "react";
 import { useApp } from "@/components/app-context";
 import { failedDraft, useAnswerOutbox, type AnswerRoute } from "@/components/answer-outbox";
 import { api, humanBody } from "@/lib/api-client";
+import { HUMAN_KINDS, failureFor } from "@/lib/answer-outbox";
 import type { Bead } from "@/lib/schema";
 import type { HumanChoice, HumanQuestion, QuestionAnswer } from "@/lib/human-choices";
 
@@ -23,21 +24,27 @@ export function HumanQuestionnaire({ bead, initialQuestions, route, disabled: he
   // Keep the shown questions and chosen snapshots stable until a refresh. The server rejects stale submissions.
   const [questions] = React.useState(initialQuestions);
   // The item leaves its list at the click (the answer outbox); a failed write
-  // brings it back here with its error and every question's draft.
-  const [drafts, setDrafts] = React.useState<Drafts>(() => failedDraft(entry, draftsFor(questions))
+  // brings it back here with its error and every question's draft. Only a failure
+  // of this form's own kind shows here.
+  const failed = failureFor(entry, route ? [route.kind] : HUMAN_KINDS);
+  const [drafts, setDrafts] = React.useState<Drafts>(() => failedDraft(failed, draftsFor(questions))
     ?? Object.fromEntries(questions.map((q) => [q.id, { selected: [], text: "", declined: false }])));
   const send = (action: "respond" | "dismiss", list: QuestionAnswer[]) => {
     const body = humanBody.submit(action, list);
     void outbox.send({
       id: bead.id,
       kind: route?.kind ?? (action === "dismiss" ? "dismiss" : "answers"),
-      request: () => (route ? route.request(body) : api.human.answer(projectId, bead.id, body)),
+      request: (signal) => (route ? route.request(body, signal) : api.human.answer(projectId, bead.id, body, signal)),
       draft: drafts,
       warning: route?.warning,
     });
   };
   const disabled = readOnly || !!held || entry?.state === "sending" || (!route && bead.status === "closed");
-  const update = (id: string, change: (draft: Draft) => Draft) => setDrafts((previous) => ({ ...previous, [id]: change(previous[id]) }));
+  // An edit deals with the failure: its error goes.
+  const update = (id: string, change: (draft: Draft) => Draft) => {
+    if (failed) outbox.clear(bead.id);
+    setDrafts((previous) => ({ ...previous, [id]: change(previous[id]) }));
+  };
   const answers = questions.map((q): QuestionAnswer | null => {
     const draft = drafts[q.id];
     const text = draft.text.trim();
@@ -56,7 +63,7 @@ export function HumanQuestionnaire({ bead, initialQuestions, route, disabled: he
     return { id: q.id, question: q.question, header: q.header, multiSelect: q.multiSelect, action: "responded",
       choices: [{ version: 1, ...q.options[0] }], text: null, ...(text ? { note: text } : {}) };
   });
-  const error = entry?.state === "failed" ? entry.error : null;
+  const error = failed?.error ?? null;
 
   return (
     <div data-human-answer={bead.id} className="min-w-0">

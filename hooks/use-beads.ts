@@ -7,6 +7,7 @@ import {
 import { toast } from "sonner";
 import { toastError } from "@/components/error-toast";
 import { api, type BeadsResponse } from "@/lib/api-client";
+import { listWithStart } from "@/lib/answer-outbox";
 import type { Bead, CreateInput, UpdateInput, DepType } from "@/lib/schema";
 import { useApp } from "@/components/app-context";
 
@@ -19,10 +20,7 @@ export function useBeads(projectId: string) {
     queryKey: beadsKey(projectId),
     // When the list was requested: the answer outbox keeps an answered item out
     // of a list that was requested before its write was done (age-6mk).
-    queryFn: async () => {
-      const startedAt = Date.now();
-      return { ...(await api.list(projectId)), startedAt };
-    },
+    queryFn: () => listWithStart(() => api.list(projectId)),
     refetchInterval: (q) => q.state.data?.meta.pollIntervalMs ?? 5000,
   });
 }

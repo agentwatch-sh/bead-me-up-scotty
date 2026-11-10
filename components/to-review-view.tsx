@@ -5,6 +5,7 @@ import { useAnswerOutbox, type AnswerRoute, type OutboxSend } from "@/components
 import { HumanAnswer } from "@/components/human-answer";
 import { Icon } from "@/components/icons";
 import { api } from "@/lib/api-client";
+import { failureFor } from "@/lib/answer-outbox";
 import { relTime, fmtDateTime } from "@/lib/beads-view";
 import { parseChoice, parseChoices, parseDecline, parseGroup, parseQuestions, parseSelection } from "@/lib/human-choices";
 import { managerAnswer, needsReview, REVIEW_REASON_KEY } from "@/lib/review";
@@ -13,7 +14,7 @@ import type { Bead } from "@/lib/schema";
 
 /** An Accept of the manager's answer, through the answer outbox: the row leaves at the click. */
 const acceptOf = (projectId: string, id: string): OutboxSend =>
-  ({ id, kind: "accept", request: () => api.review.accept(projectId, id) });
+  ({ id, kind: "accept", request: (signal) => api.review.accept(projectId, id, signal) });
 
 /** What the manager answered, as a person reads it. */
 function answerText(bead: Bead, text: string | undefined): string {
@@ -132,7 +133,7 @@ function ReviewRow({ bead, actor, disabled: bulkBusy, onHold }: { bead: Bead; ac
   const entry = outbox.entry(bead.id);
   const comment = useCommentReview();
   // A failed Reverse brings the row back with its panel open, its error and what was typed.
-  const [reversing, setReversing] = React.useState(entry?.state === "failed" && entry.kind === "reverse");
+  const [reversing, setReversing] = React.useState(!!failureFor(entry, ["reverse"]));
   const [commenting, setCommenting] = React.useState(false);
   const [draft, setDraft] = React.useState("");
   // An unsent comment holds the row: nothing removes it (Accept, Reverse, Accept all)
@@ -149,11 +150,12 @@ function ReviewRow({ bead, actor, disabled: bulkBusy, onHold }: { bead: Bead; ac
   const questions = parseQuestions(bead.metadata?.["scotty.choices"]);
   const options = questions ? null : parseChoices(bead.metadata?.["scotty.choices"]);
   const disabled = readOnly || bulkBusy || sending || comment.isPending;
-  const acceptError = entry?.state === "failed" && entry.kind === "accept" ? entry.error : null;
+  // An error shows for its own action only: an Accept's here, a Reverse's in its form.
+  const acceptError = failureFor(entry, ["accept"])?.error ?? null;
   const commentError = comment.error instanceof Error ? comment.error.message : null;
   const reverseRoute: AnswerRoute = {
     kind: "reverse",
-    request: (body) => api.review.reverse(projectId, bead.id, body),
+    request: (body, signal) => api.review.reverse(projectId, bead.id, body, signal),
     // The route answers 200 with a warning when the answer was saved but the review record was not.
     warning: (res) => (res as { warning?: string } | null)?.warning === "review_record_failed"
       ? `Your answer to ${bead.id} went to the agent, but the review record was not saved.` : null,
@@ -256,11 +258,11 @@ function ReviewRow({ bead, actor, disabled: bulkBusy, onHold }: { bead: Bead; ac
       ) : (
         <div className="flex flex-wrap items-center justify-end gap-2">
           {unsent && <span className="mr-auto text-[12px] text-[var(--text-3)]">Send or discard your comment first.</span>}
-          <button type="button" disabled={disabled} onClick={() => { comment.reset(); setCommenting(true); }}
+          <button type="button" disabled={disabled} onClick={() => { comment.reset(); outbox.clear(bead.id); setCommenting(true); }}
             className="h-8 rounded-lg border border-border bg-[var(--surface-2)] px-3 text-[12.5px] font-[550] text-[var(--text-2)] hover:bg-[var(--surface-3)] disabled:opacity-50">
             {unsent ? "Edit comment" : "Comment"}
           </button>
-          <button type="button" disabled={disabled || unsent} onClick={() => setReversing(true)}
+          <button type="button" disabled={disabled || unsent} onClick={() => { outbox.clear(bead.id); setReversing(true); }}
             className="h-8 rounded-lg border border-border bg-[var(--surface-2)] px-3 text-[12.5px] font-[550] text-[var(--text-2)] hover:bg-[var(--surface-3)] disabled:opacity-50">
             Reverse
           </button>

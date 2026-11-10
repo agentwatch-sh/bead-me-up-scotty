@@ -4,8 +4,8 @@ import { HumanQuestionnaire } from "@/components/human-questionnaire";
 import { useApp } from "@/components/app-context";
 import { Icon } from "@/components/icons";
 import { failedDraft, useAnswerOutbox, type AnswerRoute } from "@/components/answer-outbox";
+import { HUMAN_KINDS, failureFor, type OutboxKind } from "@/lib/answer-outbox";
 import { api, humanBody } from "@/lib/api-client";
-import type { OutboxKind } from "@/lib/answer-outbox";
 import { parseQuestions, parseChoices, renderChoice, isMultiSelect, renderSelection, type HumanChoice } from "@/lib/human-choices";
 import type { HumanBody } from "@/lib/human-validate";
 import type { Bead } from "@/lib/schema";
@@ -26,24 +26,28 @@ function SingleHumanAnswer({ bead, route, disabled: held }: { bead: Bead; route?
   const outbox = useAnswerOutbox();
   const entry = outbox.entry(bead.id);
   // The item leaves its list at the click (the answer outbox); a failed write
-  // brings it back here with its error and what was typed.
-  const restored = failedDraft(entry, isSingleDraft);
+  // brings it back here with its error and what was typed. Only a failure of
+  // this form's own kind shows here (an Accept's error never shows in a Reverse).
+  const failed = failureFor(entry, route ? [route.kind] : HUMAN_KINDS);
+  const restored = failedDraft(failed, isSingleDraft);
   const [selected, setSelected] = React.useState<HumanChoice[]>(() => restored?.selected ?? []);
   const selectedIds = selected.map((choice) => choice.id);
   const [text, setText] = React.useState(() => restored?.text ?? "");
+  // An edit deals with the failure: its error goes.
+  const edited = () => { if (failed) outbox.clear(bead.id); };
   const options = parseChoices(bead.metadata?.["scotty.choices"]);
   const multiSelect = isMultiSelect(bead.metadata?.["scotty.choices"]);
   const recommended: HumanChoice | undefined = options ? { version: 1, ...options[0] } : undefined;
   // With a route the item is closed on purpose (a Reverse answers a closed item).
   const disabled = readOnly || !!held || entry?.state === "sending" || (!route && bead.status === "closed");
-  const errorMessage = entry?.state === "failed" ? entry.error : null;
+  const errorMessage = failed?.error ?? null;
   // What the person typed goes with every answer: a tapped option, the selections, Dismiss.
   const note = text.trim() || undefined;
   // Each action goes to the route when there is one, else to the human route.
   const send = (kind: OutboxKind, body: HumanBody) => void outbox.send({
     id: bead.id,
     kind: route?.kind ?? kind,
-    request: () => (route ? route.request(body) : api.human.answer(projectId, bead.id, body)),
+    request: (signal) => (route ? route.request(body, signal) : api.human.answer(projectId, bead.id, body, signal)),
     draft: { text, selected } satisfies SingleDraft,
     warning: route?.warning,
   });
@@ -67,7 +71,7 @@ function SingleHumanAnswer({ bead, route, disabled: held }: { bead: Bead; route?
                 style={multiSelect && selectedIds.includes(option.id) ? { borderColor: "var(--brand)", boxShadow: "0 0 0 1px var(--brand)" } : undefined}
                 aria-pressed={multiSelect ? selectedIds.includes(option.id) : undefined}
                 onClick={() => multiSelect
-                  ? setSelected((previous) => previous.some((item) => item.id === option.id) ? previous.filter((item) => item.id !== option.id) : [...previous, choice])
+                  ? (edited(), setSelected((previous) => previous.some((item) => item.id === option.id) ? previous.filter((item) => item.id !== option.id) : [...previous, choice]))
                   : sendRespond(renderChoice(choice, note), choice, undefined, note)}
                 className="w-full rounded-lg border border-border bg-[var(--surface-2)] p-3 text-left whitespace-normal break-words hover:border-[var(--brand)] focus-visible:outline-2 focus-visible:outline-[var(--brand)] disabled:opacity-50">
                 <span className="flex flex-wrap items-center gap-2 text-[13px] font-[600]">
@@ -81,7 +85,7 @@ function SingleHumanAnswer({ bead, route, disabled: held }: { bead: Bead; route?
           })}
         </div>
       )}
-      <textarea disabled={disabled} value={text} onChange={(e) => setText(e.target.value)} rows={2}
+      <textarea disabled={disabled} value={text} onChange={(e) => { edited(); setText(e.target.value); }} rows={2}
         aria-label="Write an answer"
         placeholder={options ? "Answer the agent's question, or add a comment to your choice… (closes the item)" : "Answer the agent's question… (posts a comment and closes the item)"}
         className="mb-2 w-full resize-y rounded-[9px] border border-border bg-[var(--surface-2)] p-[9px_11px] text-[13px] leading-[1.5] text-[var(--text)] outline-none focus:border-[var(--brand)]" />

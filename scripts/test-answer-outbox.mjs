@@ -14,7 +14,7 @@ function load(name) {
   vm.runInNewContext(code, { exports, require: (id) => id.startsWith("./") ? load(id.slice(2)) : require(id), Error, Object, Date, Array, Set, Map, JSON }, { filename: name });
   return exports;
 }
-const { isHidden, outboxAfter, patchAnswered, outboxText } = load("answer-outbox");
+const { isHidden, outboxAfter, patchAnswered, outboxText, outboxKey, listWithStart, failureFor, answerLanded, mayHaveLanded, failureText, ANSWER_TIMEOUT_MS } = load("answer-outbox");
 
 // The click: the item leaves at once, whatever list is on screen.
 let box = outboxAfter({}, { type: "send", id: "q-1", kind: "respond", draft: { text: "typed" } });
@@ -48,8 +48,15 @@ assert.equal(outboxAfter({}, { type: "failed", id: "q-9", error: "e" })["q-9"], 
 box = outboxAfter({}, { type: "send", id: "r-1", kind: "accept" });
 assert.equal(outboxAfter(box, { type: "release", id: "r-1" })["r-1"], undefined);
 // The reducer never changes the box it was given.
-const frozen = Object.freeze({ "q-3": Object.freeze({ state: "sending", kind: "respond" }) });
-outboxAfter(frozen, { type: "sent", id: "q-3", at: 1 });
+// A frozen box would throw on a write; the result is a new object, and the input is as it was.
+const frozen = Object.freeze({ "q-3": Object.freeze({ state: "sending", kind: "respond", draft: Object.freeze({ text: "t" }) }) });
+const before = JSON.parse(JSON.stringify(frozen));
+for (const event of [{ type: "sent", id: "q-3", at: 1 }, { type: "failed", id: "q-3", error: "e" }, { type: "release", id: "q-3" }, { type: "send", id: "q-4", kind: "dismiss" }]) {
+  const after = outboxAfter(frozen, event);
+  assert.notEqual(after, frozen, `${event.type} gives a new box`);
+  assert.deepEqual(frozen, before, `${event.type} leaves the given box as it was`);
+}
+assert.equal(outboxAfter(frozen, { type: "sent", id: "q-3", at: 1 })["q-3"].state, "sent");
 console.log("PASS answer outbox: out at the click, out while an older list arrives, back with the error and the draft");
 
 // The cache patch after the 2xx: the answer's own fields, never the comments the
@@ -80,3 +87,77 @@ for (const kind of ["respond", "dismiss", "decline", "answers", "accept", "rever
 assert.equal(outboxText("respond", "q-1").done, "Responded to q-1");
 assert.equal(outboxText("accept", "q-1").done, "Accepted the answer to q-1");
 console.log("PASS answer outbox: Sending… at the click, a confirmation after the 2xx");
+
+// ---- The start of a list request, and the 2xx: which list is older (review M4) ----
+{
+  let clock = 1000;
+  let resolve;
+  const listing = listWithStart(() => new Promise((done) => { resolve = done; }), () => clock);
+  clock = 3000; // the list answers later; its start is what counts
+  resolve({ beads: [], meta: {} });
+  const list = await listing;
+  assert.equal(list.startedAt, 1000, "the start is taken before the request, not when it answers");
+  assert.deepEqual(list.beads, []);
+  // An answer whose 2xx came at 2000: the list requested at 1000 is older, even though it arrived at 3000.
+  const sent = { state: "sent", kind: "respond", at: 2000 };
+  assert.equal(isHidden(sent, list.startedAt), true);
+  clock = 2500;
+  const newer = await listWithStart(async () => ({ beads: [], meta: {} }), () => clock);
+  assert.equal(isHidden(sent, newer.startedAt), false, "a list requested after the 2xx shows the board as it is");
+}
+console.log("PASS answer outbox: a list's start is taken before it is requested; the older one keeps the item out");
+
+// ---- Two projects with the same item id (review M3) ----
+{
+  const a = outboxKey("alpha", "q-1");
+  const b = outboxKey("beta", "q-1");
+  assert.notEqual(a, b);
+  assert.notEqual(outboxKey("a/b", "c"), outboxKey("a", "b/c"), "the key cannot be forged by a slash");
+  const box = outboxAfter({}, { type: "send", id: a, kind: "respond" });
+  assert.equal(isHidden(box[a], undefined), true);
+  assert.equal(isHidden(box[b], undefined), false, "an answer in one project never hides the same id in another");
+}
+console.log("PASS answer outbox: entries are kept per project");
+
+// ---- An error shows only for its own kind (review M2) ----
+{
+  const failed = { state: "failed", kind: "accept", error: "refused", draft: undefined };
+  assert.equal(failureFor(failed, ["accept"]), failed);
+  assert.equal(failureFor(failed, ["reverse"]), undefined, "an Accept's error never shows in the Reverse form");
+  assert.equal(failureFor(failed, ["respond", "dismiss", "decline", "answers"]), undefined);
+  assert.equal(failureFor({ state: "sending", kind: "accept" }, ["accept"]), undefined);
+  assert.equal(failureFor(undefined, ["accept"]), undefined);
+}
+console.log("PASS answer outbox: an error shows only in the form of its own kind");
+
+// ---- After a failure that may have been written, the item tells (review M1, I3) ----
+{
+  const network = new TypeError("Failed to fetch");
+  const timeout = Object.assign(new Error("signal timed out"), { name: "TimeoutError" });
+  const aborted = Object.assign(new Error("aborted"), { name: "AbortError" });
+  const server = Object.assign(new Error("Your answer is saved; closing failed: try again."), { status: 500, code: "answer_saved_close_failed" });
+  const gateway = Object.assign(new Error("board backend unavailable"), { status: 502 });
+  const refusal = Object.assign(new Error("This question is no longer waiting for an answer."), { status: 409, code: "stale_question" });
+  const login = Object.assign(new Error("password login required"), { status: 403 });
+  for (const e of [network, timeout, aborted, server, gateway]) assert.equal(mayHaveLanded(e), true, e.message);
+  for (const e of [refusal, login]) assert.equal(mayHaveLanded(e), false, `${e.message}: a refusal wrote nothing`);
+  assert.match(failureText(network), /did not reach the board/);
+  assert.match(failureText(aborted), /did not reach the board/);
+  assert.equal(failureText(timeout), `The board did not answer within ${ANSWER_TIMEOUT_MS / 1000} s. Try again.`);
+  assert.equal(failureText(server), "Your answer is saved; closing failed: try again.");
+  assert.equal(failureText(refusal), refusal.message);
+  assert.equal(ANSWER_TIMEOUT_MS, 30000);
+  const closed = (close_reason, metadata = {}) => ({ id: "q-1", status: "closed", close_reason, metadata });
+  assert.equal(answerLanded("respond", closed("Responded")), true);
+  assert.equal(answerLanded("answers", closed("Responded")), true);
+  assert.equal(answerLanded("dismiss", closed("Dismissed")), true);
+  assert.equal(answerLanded("decline", closed("Declined")), true);
+  assert.equal(answerLanded("respond", closed("Dismissed")), false, "another close is not this answer");
+  assert.equal(answerLanded("respond", { id: "q-1", status: "open" }), false);
+  assert.equal(answerLanded("accept", closed("Responded", { "board.review": "accepted" })), true);
+  assert.equal(answerLanded("accept", closed("Responded", { "board.review": "pending" })), false);
+  assert.equal(answerLanded("reverse", closed("Responded", { "board.review": "reversed" })), true);
+  assert.equal(answerLanded("reverse", closed("Responded", { "board.review": "pending" })), false);
+  assert.equal(answerLanded("respond", null), false);
+}
+console.log("PASS answer outbox: a failure that may have been written is checked against the item");
