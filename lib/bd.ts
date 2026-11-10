@@ -12,7 +12,7 @@ import {
   type UpdateInput,
   type DepType,
 } from "./schema";
-import type { BeadsStore, DoctorInfo } from "./store";
+import type { BeadsStore, DoctorInfo, SlotSteps } from "./store";
 
 const pExecFile = promisify(execFile);
 const BD_BIN = process.env.BD_BIN || "bd";
@@ -149,8 +149,51 @@ export function createBdStore(repoPath: string): BeadsStore {
     return parsed.data;
   }
 
+  // The writes, each built once. They run inside a slot of the queue: the
+  // store's methods below and `inOneSlot` take the slot around them.
+  const steps: SlotSteps = {
+    async get(id) {
+      try {
+        return await show(id);
+      } catch (e) {
+        if (e instanceof BdError && e.code === "not_found") return null;
+        throw e;
+      }
+    },
+    show,
+    async addComment(id, text, actor) {
+      // "--" ends the flags: a comment such as "--file=PATH" or "--actor=X"
+      // is text, not a flag. bd keeps the text after it as it is.
+      await runBdRaw(["comment", id, "--", text], rw(actor));
+    },
+    async close(id, actor, reason) {
+      const args = ["close", id];
+      // Only `bd close --reason` persists a close reason, and re-closing an
+      // already-closed bead won't overwrite it — so this is the one chance
+      // to record why. Args go through execFile, so prose is safe verbatim.
+      const trimmed = reason?.trim();
+      if (trimmed) args.push("--reason", trimmed);
+      await runBdRaw(args, rw(actor));
+    },
+    async removeLabel(id, label, actor) {
+      await runBdRaw(["update", id, "--remove-label", label], rw(actor));
+    },
+    async setMetadata(id, values, actor) {
+      const args = ["update", id];
+      for (const [key, value] of Object.entries(values)) {
+        if (value === null) args.push("--unset-metadata", key);
+        else args.push("--set-metadata", `${key}=${value}`);
+      }
+      if (args.length > 2) await runBdRaw(args, rw(actor));
+    },
+  };
+
   return {
     kind: "bd",
+
+    inOneSlot(fn) {
+      return serializeWrite(repoPath, () => fn(steps));
+    },
 
     async list() {
       // Dedupe concurrent callers onto one in-flight export, and serialize that
@@ -168,14 +211,7 @@ export function createBdStore(repoPath: string): BeadsStore {
 
     async get(id) {
       // Serialized too — `bd show` rewrites the store like any other invocation.
-      return serializeWrite(repoPath, async () => {
-        try {
-          return await show(id);
-        } catch (e) {
-          if (e instanceof BdError && e.code === "not_found") return null;
-          throw e;
-        }
-      });
+      return serializeWrite(repoPath, () => steps.get(id));
     },
 
     comments(id) {
@@ -246,13 +282,7 @@ export function createBdStore(repoPath: string): BeadsStore {
     setStatus(id, status, actor, reason) {
       return serializeWrite(repoPath, async () => {
         if (status === "closed") {
-          const args = ["close", id];
-          // Only `bd close --reason` persists a close reason, and re-closing an
-          // already-closed bead won't overwrite it — so this is the one chance
-          // to record why. Args go through execFile, so prose is safe verbatim.
-          const trimmed = reason?.trim();
-          if (trimmed) args.push("--reason", trimmed);
-          await runBdRaw(args, rw(actor));
+          await steps.close(id, actor, reason);
         } else {
           await runBdRaw(["update", id, "-s", status], rw(actor));
         }
@@ -275,9 +305,7 @@ export function createBdStore(repoPath: string): BeadsStore {
 
     addComment(id, text, actor) {
       return serializeWrite(repoPath, async () => {
-        // "--" ends the flags: a comment such as "--file=PATH" or "--actor=X"
-        // is text, not a flag. bd keeps the text after it as it is.
-        await runBdRaw(["comment", id, "--", text], rw(actor));
+        await steps.addComment(id, text, actor);
         return show(id);
       });
     },
@@ -308,19 +336,14 @@ export function createBdStore(repoPath: string): BeadsStore {
 
     setMetadata(id, values, actor) {
       return serializeWrite(repoPath, async () => {
-        const args = ["update", id];
-        for (const [key, value] of Object.entries(values)) {
-          if (value === null) args.push("--unset-metadata", key);
-          else args.push("--set-metadata", `${key}=${value}`);
-        }
-        if (args.length > 2) await runBdRaw(args, rw(actor));
+        await steps.setMetadata(id, values, actor);
         return show(id);
       });
     },
 
     removeLabel(id, label, actor) {
       return serializeWrite(repoPath, async () => {
-        await runBdRaw(["update", id, "--remove-label", label], rw(actor));
+        await steps.removeLabel(id, label, actor);
         return show(id);
       });
     },

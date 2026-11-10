@@ -563,6 +563,8 @@ The API and UI scripts require `SCOTTY_TEST_URL`, `SCOTTY_CHOICES_REPO`, and an 
 Use `SCOTTY_TEST_BD` to select bd and `SCOTTY_BROWSER_EXECUTABLE` to select a headless browser.
 Run `node scripts/test-human-choices-api.mjs`, `node scripts/test-human-decline-api.mjs`, `node scripts/test-human-choices-ui.mjs`, and `node scripts/test-human-note-ui.mjs` on those fixtures.
 Run `node scripts/test-human-note.mjs` for the pure checks of a note in the human route.
+An answer takes one slot of the board's bd queue: its steps (read, comment, close, read) run back to back, and a list request made meanwhile runs after the close.
+Run `node scripts/test-human-answer-slot.mjs` for those checks (a fake bd; no server or board).
 
 Version 2 groups one to four questions in the same item:
 

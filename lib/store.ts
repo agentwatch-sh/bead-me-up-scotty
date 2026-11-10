@@ -18,8 +18,32 @@ export interface DoctorInfo {
   message: string;
 }
 
+/**
+ * The steps of one write sequence, run back to back inside one slot of the
+ * board's bd queue (see `inOneSlot`). Unlike the store's own methods, a write
+ * step does not read the item again afterwards: the sequence calls `show` once,
+ * when it needs the result.
+ */
+export interface SlotSteps {
+  /** `bd show`; null when the item does not exist. */
+  get(id: string): Promise<Bead | null>;
+  show(id: string): Promise<Bead>;
+  addComment(id: string, text: string, actor: string): Promise<void>;
+  close(id: string, actor: string, reason?: string): Promise<void>;
+  removeLabel(id: string, label: string, actor: string): Promise<void>;
+  setMetadata(id: string, values: Record<string, string | number | null>, actor: string): Promise<void>;
+}
+
 export interface BeadsStore {
   kind: "bd" | "demo";
+  /**
+   * Run `steps` in ONE slot of the board's bd queue: no other bd call of this
+   * board (a list's `bd export`, another write) runs between its steps, and a
+   * call made meanwhile waits until the whole sequence is done (agentwatch
+   * board age-6mk). Call only the given steps inside it: a store method called
+   * there waits for this same slot and never runs.
+   */
+  inOneSlot<T>(steps: (s: SlotSteps) => Promise<T>): Promise<T>;
   list(): Promise<Bead[]>;
   get(id: string): Promise<Bead | null>;
   /** One item's comments (`bd comments ID`); `get` leaves them out. */

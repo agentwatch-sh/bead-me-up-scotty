@@ -20,6 +20,17 @@ function find(id: string): Bead {
 
 export const demoStore: BeadsStore = {
   kind: "demo",
+  // In memory, each step finishes before the next one starts: no queue is needed.
+  inOneSlot(fn) {
+    return fn({
+      get: (id) => demoStore.get(id),
+      show: async (id) => ({ ...find(id) }),
+      addComment: async (id, text, actor) => { await demoStore.addComment(id, text, actor); },
+      close: async (id, actor, reason) => { await demoStore.setStatus(id, "closed", actor, reason); },
+      removeLabel: async (id, label, actor) => { await demoStore.removeLabel(id, label, actor); },
+      setMetadata: async (id, values, actor) => { await demoStore.setMetadata(id, values, actor); },
+    });
+  },
   async list() {
     return beads.map((b) => ({ ...b }));
   },
