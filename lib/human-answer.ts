@@ -1,7 +1,8 @@
-import type { Bead } from "./schema";
+import type { Bead, Comment } from "./schema";
 import type { BeadsStore, SlotSteps } from "./store";
 import { validateHumanAnswer, type HumanBody } from "./human-validate";
 import { ACKED_KEY, REVIEW_KEY, REVIEW_BY_KEY, REVIEW_REASON_KEY, errorTag } from "./review";
+import { actorWroteAfter, clickTime, savedByThisClick } from "./answer-match";
 
 export type HumanAnswerResult =
   | { ok: true; bead: Bead }
@@ -20,16 +21,9 @@ export interface HumanAnswerOptions {
   log?: (line: string) => void;
 }
 
-/**
- * Is `text` already the actor's newest comment on the item? Then an earlier try
- * of this answer saved it (its close failed, or its response was lost), and the
- * answer is not written a second time. `bd show` gives only the count of the
- * comments, so they are read only when the item has some.
- */
-async function alreadySaved(s: SlotSteps, item: Bead, text: string, actor: string): Promise<boolean> {
-  if (item.comment_count === 0) return false;
-  const mine = (await s.comments(item.id)).filter((c) => c.author === actor);
-  return mine.length > 0 && mine[mine.length - 1].text === text;
+/** The item's comments; `bd show` gives only their count, so they are read only when it has some. */
+async function commentsOf(s: SlotSteps, item: Bead): Promise<Comment[]> {
+  return item.comment_count === 0 ? [] : s.comments(item.id);
 }
 
 /**
@@ -38,10 +32,14 @@ async function alreadySaved(s: SlotSteps, item: Bead, text: string, actor: strin
  * read the item once for the response. No list export runs between the steps,
  * and no step reads the item again after the comment.
  *
- * The answer is written once: when the actor's newest comment on the item is
- * already this text (an earlier try saved it), only the close runs. When the
- * close fails after the answer is saved, the result says so
- * (`answer_saved_close_failed`), and a retry only closes.
+ * An answer is written once. The page sends the click time (`answered_at`), and
+ * a retry of the same answer keeps it. When the item's newest comment, from
+ * anyone, is the actor's with this text and written after the click, an earlier
+ * try saved it: only the close runs. When an earlier try also closed the item
+ * (with this answer's reason, and the actor's newest comment is this text after
+ * the click), the answer is a success with no write. Without a click time, the
+ * answer is written. A close that fails after the answer is saved says so
+ * (`answer_saved_close_failed`), and the retry only closes.
  *
  * Matches `bd human` (upstream issue #88; fork-only until that lands):
  *  - respond → the comment answering the agent's question, then close with
@@ -56,13 +54,23 @@ async function alreadySaved(s: SlotSteps, item: Bead, text: string, actor: strin
  */
 export async function answerHuman(store: BeadsStore, id: string, body: HumanBody, opts: HumanAnswerOptions): Promise<HumanAnswerResult> {
   const log = opts.log ?? ((line: string) => console.error(line));
+  const clickedAt = clickTime(body.answered_at);
   return store.inOneSlot(async (s) => {
     const item = await s.get(id);
+    // An earlier try of this click closed the item with this answer: it is done.
+    if (item && item.status === "closed" && clickedAt !== null) {
+      const done = validateHumanAnswer(item, body, { closedOk: true });
+      if (done.ok && done.comment !== null && item.close_reason === done.reason
+          && actorWroteAfter(await commentsOf(s, item), done.comment, opts.actor, clickedAt)) {
+        return { ok: true, bead: item };
+      }
+    }
     const verdict = validateHumanAnswer(item, body, { closedOk: false });
     if (!verdict.ok) return { ok: false, status: verdict.status, error: verdict.error, code: verdict.code };
     let saved = false;
     if (verdict.comment !== null && item) {
-      if (!(await alreadySaved(s, item, verdict.comment, opts.actor))) await s.addComment(id, verdict.comment, opts.actor);
+      const retry = clickedAt !== null && savedByThisClick(await commentsOf(s, item), verdict.comment, opts.actor, clickedAt);
+      if (!retry) await s.addComment(id, verdict.comment, opts.actor);
       saved = true;
     }
     try {

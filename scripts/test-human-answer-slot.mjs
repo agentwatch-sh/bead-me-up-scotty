@@ -35,7 +35,9 @@ const options = [];
 let item;
 const fail = new Set();
 let now = 0;
-const at = () => new Date(Date.UTC(2026, 10, 10, 12, 0, now++)).toISOString();
+// A fake clock in seconds: iso(s) is a time on it; at() takes the next second.
+const iso = (s) => new Date(Date.UTC(2026, 10, 10, 12, 0, 0) + s * 1000).toISOString();
+const at = () => iso(now++);
 const shown = () => ({ ...item, comments: undefined, comment_count: item.comments.length });
 function fakeExecFile() { throw new Error("only the promisified form is used"); }
 fakeExecFile[util.promisify.custom] = async (bin, args, opts) => {
@@ -81,7 +83,9 @@ const store = createBdStore("/nonexistent-repo");
 const question = (metadata = {}, comments = []) => ({ id: "q-1", title: "Q", status: "open", issue_type: "task", priority: 2, labels: ["human", "question"], metadata, comments });
 const calls = () => log.filter(([at]) => at === "start").map(([, c]) => c);
 const reset = (metadata, comments) => { log.length = 0; options.length = 0; fail.clear(); item = question(metadata, comments); };
-const answer = (body, keepOpen = false) => answerHuman(store, "q-1", body, { actor: ACTOR, keepOpen, log: () => {} });
+// Each answer carries its click time (answered_at), as the page sends it; null sends none.
+const answer = (body, keepOpen = false, clickedAt = iso(now)) =>
+  answerHuman(store, "q-1", clickedAt === null ? body : { ...body, answered_at: clickedAt }, { actor: ACTOR, keepOpen, log: () => {} });
 const mine = () => item.comments.filter((c) => c.author === ACTOR);
 
 // Respond on an item with no comment: show (validate), comment, close, show (the response).
@@ -130,36 +134,46 @@ result = await answer({ action: "respond", text: "Open." }, true);
 assert.deepEqual(calls(), [["show", "q-1", "--json"], ["comment", "q-1", "--", "Open."], ["update", "q-1", "--remove-label", "human"], ["show", "q-1", "--json"]]);
 console.log("PASS human answer calls: show, comment, close, show; no show after the comment; review cleanup; keep-open; refusals");
 
-// ---- The answer is written once (review I1) ----
-// An item that holds comments: they are read, to find the actor's newest one.
+// ---- The answer is written once, and only a retry of the same click is one (I1; re-check Important 2) ----
+const BODY = { action: "respond", text: "Use blue." };
+// An item that holds comments: they are read, to find the newest.
 reset({}, [{ author: "agent:a", text: "Context.", created_at: at() }]);
-result = await answer({ action: "respond", text: "Use blue." });
+result = await answer(BODY);
 assert.deepEqual(calls().map((c) => c[0]), ["show", "comments", "comment", "close", "show"]);
 // A failed close after the comment: the answer is saved, and the route says so.
 reset();
+const click = iso(now);
 fail.add("close");
-result = await answer({ action: "respond", text: "Use blue." });
+result = await answer(BODY, false, click);
 assert.deepEqual({ ...result }, { ok: false, status: 500, code: "answer_saved_close_failed", error: "Your answer is saved; closing failed: try again." });
 assert.deepEqual(calls().map((c) => c[0]), ["show", "comment", "close"]);
 assert.equal(mine().length, 1);
-// The retry finds the same text as the actor's newest comment: it only closes.
+// The retry of the same click (its answered_at) finds that comment as the item's newest: it only closes.
 fail.clear();
 log.length = 0;
-result = await answer({ action: "respond", text: "Use blue." });
+now += 120; // a retry two minutes later still carries the click
+result = await answer(BODY, false, click);
 assert.equal(result.ok, true);
 assert.deepEqual(calls().map((c) => c[0]), ["show", "comments", "close", "show"]);
 assert.equal(mine().length, 1, "one answer comment after the failed close and the retry");
-// A different text, or the same text by another author, or an older comment of the actor
-// that a newer one followed: the answer is written.
-for (const comments of [
-  [{ author: ACTOR, text: "Other words.", created_at: at() }],
-  [{ author: "agent:a", text: "Use blue.", created_at: at() }],
-  [{ author: ACTOR, text: "Use blue.", created_at: at() }, { author: ACTOR, text: "Later words.", created_at: at() }],
+// Every other case writes the answer: it is a new answer, not a retry.
+for (const [name, comments] of [
+  ["another text", () => [{ author: ACTOR, text: "Other words.", created_at: at() }]],
+  ["the same text by another author", () => [{ author: "agent:a", text: "Use blue.", created_at: at() }]],
+  ["the actor's same text, then a newer comment of the actor", () => [{ author: ACTOR, text: "Use blue.", created_at: at() }, { author: ACTOR, text: "Later words.", created_at: at() }]],
+  ["the actor's same text, then another author's question", () => [{ author: ACTOR, text: "Use blue.", created_at: at() }, { author: "agent:a", text: "Are you sure?", created_at: at() }]],
+  ["the actor's same text from before the click", () => [{ author: ACTOR, text: "Use blue.", created_at: iso(now - 60) }]],
 ]) {
-  reset({}, comments);
-  await answer({ action: "respond", text: "Use blue." });
-  assert.deepEqual(calls().map((c) => c[0]), ["show", "comments", "comment", "close", "show"], JSON.stringify(comments));
+  reset({}, comments());
+  await answer(BODY);
+  assert.deepEqual(calls().map((c) => c[0]), ["show", "comments", "comment", "close", "show"], name);
+  assert.equal(mine().at(-1).text, "Use blue.", name);
 }
+// A page that sends no click time (an older build): the answer is written, and with no
+// click there is no retry to look for, so the comments are not read.
+reset({}, [{ author: ACTOR, text: "Use blue.", created_at: at() }]);
+await answer(BODY, false, null);
+assert.deepEqual(calls().map((c) => c[0]), ["show", "comment", "close", "show"]);
 // A bare Dismiss saved no answer: its failed close fails the request as bd failed.
 reset();
 fail.add("close");
@@ -167,8 +181,37 @@ await assert.rejects(answer({ action: "dismiss" }), /close refused/);
 // A failed comment saved nothing: bd's error.
 reset();
 fail.add("comment");
-await assert.rejects(answer({ action: "respond", text: "Use blue." }), /comment refused/);
-console.log("PASS human answer once: a retry after a failed close only closes; the failure says the answer is saved");
+await assert.rejects(answer(BODY), /comment refused/);
+console.log("PASS human answer once: only a retry of the same click skips the comment; a later question gets a new answer");
+
+// ---- An answer that an earlier try of the same click already closed is a success (re-check Minor 2) ----
+const closedBy = (reason, comment) => {
+  reset({}, comment ? [comment] : []);
+  item = { ...item, status: "closed", close_reason: reason, closed_at: at() };
+};
+const WORDS = { action: "dismiss", text: "Fine." };
+for (const [body, reason] of [[BODY, "Responded"], [WORDS, "Dismissed"]]) {
+  const click = iso(now);
+  closedBy(reason, { author: ACTOR, text: body.text, created_at: iso(now + 1) });
+  const done = await answer(body, false, click);
+  assert.equal(done.ok, true, reason);
+  assert.equal(done.bead.status, "closed");
+  assert.deepEqual(calls().map((c) => c[0]), ["show", "comments"], `${reason}: no write, the answer is there`);
+}
+// Any other closed item is refused as stale. (A Dismiss with words: the rules refuse it on a
+// closed item. A plain free-text Respond is not refused on a closed item, before this change too.)
+for (const [name, reason, comment] of [
+  ["closed as another reason", "Responded", () => ({ author: ACTOR, text: "Fine.", created_at: iso(now + 1) })],
+  ["closed with another author's words", "Dismissed", () => ({ author: MANAGER, text: "Fine.", created_at: iso(now + 1) })],
+  ["closed with the actor's same words from before the click", "Dismissed", () => ({ author: ACTOR, text: "Fine.", created_at: iso(now - 60) })],
+]) {
+  const click = iso(now);
+  closedBy(reason, comment());
+  const refused = await answer(WORDS, false, click);
+  assert.equal(refused.ok, false, name);
+  assert.equal(refused.code, "stale_question", name);
+}
+console.log("PASS human answer once: a closed item that holds this click's answer is a success; any other closed item is stale");
 
 // ---- A list made during an answer waits for the whole answer ----
 reset();
@@ -230,7 +273,8 @@ const saved = { BD_BIN: process.env.BD_BIN, SCOTTY_BD_TIMEOUT_MS: process.env.SC
 try {
   const bin = path.join(dir, "bd");
   const row = JSON.stringify({ id: "q-1", title: "Q", status: "open", issue_type: "task", priority: 2, labels: ["human", "question"], comment_count: 0 });
-  // A bd that hangs on close and answers everything else at once.
+  // A bd that hangs on close and answers everything else at once. (The limit stops
+  // the BD_BIN process only: a wrapper's own child is not stopped; see lib/bd.ts.)
   fs.writeFileSync(bin, `#!/bin/sh\ncase "$1" in\n  close) echo $$ >> "$(dirname "$0")/pids"; exec sleep 30 ;;\n  show) printf '%s\\n' '{"data":[${row}]}' ;;\n  export) printf '%s\\n' '${row}' ;;\nesac\nexit 0\n`, { mode: 0o755 });
   process.env.BD_BIN = bin;
   process.env.SCOTTY_BD_TIMEOUT_MS = "400";

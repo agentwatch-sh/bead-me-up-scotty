@@ -21,6 +21,14 @@ const BD_BIN = process.env.BD_BIN || "bd";
  * Dolt lock instead of failing, and a write sequence holds the board's queue
  * slot across several calls: without a limit, one hung call would hold every
  * list and write of the board. SCOTTY_BD_TIMEOUT_MS overrides the 60 s.
+ *
+ * The limit stops the process that BD_BIN names, and only that one: execFile's
+ * timeout signals its own child, and execFile does not pass `detached` to spawn,
+ * so bd cannot get a process group of its own here. When BD_BIN is a wrapper (a
+ * shell script that runs the real bd as its child, as scripts/slow-bd.sh does in
+ * the UI test), the real bd under it keeps running after the limit and can still
+ * write; the slot is released either way. agentwatch sets BD_BIN to the real bd.
+ * A group stop needs a spawn-based runner (re-check rv-6mk-b, Minor 4).
  */
 const BD_TIMEOUT_MS = Number(process.env.SCOTTY_BD_TIMEOUT_MS) > 0 ? Number(process.env.SCOTTY_BD_TIMEOUT_MS) : 60_000;
 

@@ -4,10 +4,11 @@ import { parseChoices, choiceSnapshot, renderChoice, isMultiSelect, selectionSna
 import { REVIEW_KEY } from "./review";
 
 export const humanBodySchema = z.discriminatedUnion("action", [
-  z.object({ action: z.literal("decline"), text: z.string().min(1).max(4000).refine((value) => value.trim().length > 0) }),
+  // `answered_at`: when the person clicked (the page's clock); a retry of the same answer keeps it (age-6mk).
+  z.object({ action: z.literal("decline"), text: z.string().min(1).max(4000).refine((value) => value.trim().length > 0), answered_at: z.string().max(64).optional() }),
   // `note`: what the person typed with a choice; `text` holds it too, in the canonical comment.
-  z.object({ action: z.literal("respond"), text: z.string().min(1), choice: z.unknown().optional(), choices: z.unknown().optional(), answers: z.unknown().optional(), note: z.string().optional() }),
-  z.object({ action: z.literal("dismiss"), text: z.string().optional(), choice: z.unknown().optional(), answers: z.unknown().optional(), note: z.string().optional() }),
+  z.object({ action: z.literal("respond"), text: z.string().min(1), choice: z.unknown().optional(), choices: z.unknown().optional(), answers: z.unknown().optional(), note: z.string().optional(), answered_at: z.string().max(64).optional() }),
+  z.object({ action: z.literal("dismiss"), text: z.string().optional(), choice: z.unknown().optional(), answers: z.unknown().optional(), note: z.string().optional(), answered_at: z.string().max(64).optional() }),
 ]);
 export type HumanBody = z.infer<typeof humanBodySchema>;
 

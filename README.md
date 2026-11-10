@@ -565,9 +565,9 @@ Run `node scripts/test-human-choices-api.mjs`, `node scripts/test-human-decline-
 Run `node scripts/test-human-note.mjs` for the pure checks of a note in the human route.
 An answer takes one slot of the board's bd queue: its steps (read, comment, close, read) run back to back, and a list request made meanwhile runs after the close.
 A To Review Accept or Reverse takes one slot the same way.
-An answer is written once: when the actor's newest comment on the item already holds the same text (an earlier try saved it), only the close runs.
+An answer is written once: the page sends the click time (`answered_at`), and a retry of the same answer keeps it. When the item's newest comment, from anyone, is the actor's with the same text and written after the click (5 s allowed for the clocks), an earlier try saved it, and only the close runs. When an earlier try also closed the item, the answer is a success with no write. A comment by someone else after it, or the same words before the click, make a new answer, which is written.
 A close that fails after the answer is saved answers 500 `answer_saved_close_failed` ("Your answer is saved; closing failed: try again.").
-Each bd call stops after 60 seconds (`SCOTTY_BD_TIMEOUT_MS` overrides it) with the code `bd_timeout`, so a hung call never holds a board's queue.
+Each bd call stops after 60 seconds (`SCOTTY_BD_TIMEOUT_MS` overrides it) with the code `bd_timeout`, so one hung call holds a board's queue for at most 60 s. The limit stops the process that `BD_BIN` names only: a wrapper's own child (as in `scripts/slow-bd.sh`) keeps running.
 Run `node scripts/test-human-answer-slot.mjs` for those checks (a fake bd, and a sleeping fake bd in a temporary folder; no server or board).
 An answered item leaves Needs You (or To Review) at the click and shows "Sending…"; a short confirmation follows the write.
 An older list that arrives meanwhile never brings it back; a failed write brings it back in its place with its error and what was typed.
