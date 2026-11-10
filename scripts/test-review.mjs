@@ -200,22 +200,17 @@ for (const failAt of ["comment", "meta"]) {
   assert.equal(errorTag(new BdError("x", "SECRET ANSWER TEXT")), "BdError", "a code that is not a plain token is left out");
   assert.equal(errorTag("SECRET ANSWER TEXT"), "a non-Error value");
   assert.equal(errorTag(undefined), "a non-Error value");
-  {
-    const src = readFileSync(new URL("../app/api/p/[projectId]/beads/[id]/review/route.ts", import.meta.url), "utf8");
-    const logs = src.split("\n").filter((line) => line.includes("console."));
-    assert.ok(logs.length > 0, "review");
-    for (const line of logs) assert.match(line, /console\.error\(`[^`]*\$\{errorTag\([^)]*\)\}`\);/, `review: ${line.trim()}`);
-  }
-  {
-    // The human route's rules and its log line live in lib/human-answer.ts (age-6mk).
-    const route = readFileSync(new URL("../app/api/p/[projectId]/beads/[id]/human/route.ts", import.meta.url), "utf8");
-    assert.ok(!route.includes("console."), "the human route logs nothing itself");
-    const src = readFileSync(new URL("../lib/human-answer.ts", import.meta.url), "utf8");
+  // The routes' rules and their log lines live in lib/human-answer.ts and
+  // lib/review-answer.ts (age-6mk); the routes log nothing themselves.
+  for (const [route, lib] of [["human", "human-answer"], ["review", "review-answer"]]) {
+    const routeSrc = readFileSync(new URL(`../app/api/p/[projectId]/beads/[id]/${route}/route.ts`, import.meta.url), "utf8");
+    assert.ok(!routeSrc.includes("console."), `the ${route} route logs nothing itself`);
+    const src = readFileSync(new URL(`../lib/${lib}.ts`, import.meta.url), "utf8");
     const logs = src.split("\n").filter((line) => /\blog\(`/.test(line));
-    assert.ok(logs.length > 0, "human");
-    for (const line of logs) assert.match(line, /log\(`[^`]*\$\{errorTag\([^)]*\)\}`\);/, `human: ${line.trim()}`);
+    assert.ok(logs.length > 0, route);
+    for (const line of logs) assert.match(line, /log\(`[^`]*\$\{errorTag\([^)]*\)\}`\);/, `${route}: ${line.trim()}`);
     // The default sink passes the line on as it is.
-    assert.ok(src.includes("((line: string) => console.error(line))"), "human: the default log is console.error");
+    assert.ok(src.includes("((line: string) => console.error(line))"), `${route}: the default log is console.error`);
   }
   console.log("PASS errorTag: a log line holds the error's name and code, never its message");
 }

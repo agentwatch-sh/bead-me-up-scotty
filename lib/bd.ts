@@ -16,6 +16,13 @@ import type { BeadsStore, DoctorInfo, SlotSteps } from "./store";
 
 const pExecFile = promisify(execFile);
 const BD_BIN = process.env.BD_BIN || "bd";
+/**
+ * The longest one bd call may run (agentwatch board age-6mk). bd waits for the
+ * Dolt lock instead of failing, and a write sequence holds the board's queue
+ * slot across several calls: without a limit, one hung call would hold every
+ * list and write of the board. SCOTTY_BD_TIMEOUT_MS overrides the 60 s.
+ */
+const BD_TIMEOUT_MS = Number(process.env.SCOTTY_BD_TIMEOUT_MS) > 0 ? Number(process.env.SCOTTY_BD_TIMEOUT_MS) : 60_000;
 
 export class BdError extends Error {
   code?: string;
@@ -38,6 +45,7 @@ async function runBdRaw(
     const { stdout } = await pExecFile(BD_BIN, args, {
       cwd: opts.repoPath,
       maxBuffer: 32 * 1024 * 1024,
+      timeout: BD_TIMEOUT_MS,
       env: {
         ...process.env,
         BD_JSON_ENVELOPE: "1",
@@ -46,7 +54,10 @@ async function runBdRaw(
     });
     return stdout;
   } catch (err: unknown) {
-    const e = err as { stderr?: string; message?: string };
+    const e = err as { stderr?: string; message?: string; killed?: boolean };
+    // The time limit killed bd. The message names the command only: the error's
+    // own message quotes the argv, which can hold the operator's answer text.
+    if (e.killed) throw new BdError(`bd ${args[0]} did not finish within ${BD_TIMEOUT_MS / 1000} s`, "bd_timeout");
     // bd emits a JSON error object to stderr with a `code` when --json is active.
     const stderr = (e.stderr || "").trim();
     try {
@@ -161,6 +172,13 @@ export function createBdStore(repoPath: string): BeadsStore {
       }
     },
     show,
+    async comments(id) {
+      const data = await runBdJson(["comments", id], ro);
+      return commentSchema.array().parse(Array.isArray(data) ? data : []);
+    },
+    async reopen(id, actor) {
+      await runBdRaw(["reopen", id], rw(actor));
+    },
     async addComment(id, text, actor) {
       // "--" ends the flags: a comment such as "--file=PATH" or "--actor=X"
       // is text, not a flag. bd keeps the text after it as it is.
@@ -215,10 +233,7 @@ export function createBdStore(repoPath: string): BeadsStore {
     },
 
     comments(id) {
-      return serializeWrite(repoPath, async () => {
-        const data = await runBdJson(["comments", id], ro);
-        return commentSchema.array().parse(Array.isArray(data) ? data : []);
-      });
+      return serializeWrite(repoPath, () => steps.comments(id));
     },
 
     create(input: CreateInput, actor: string) {
@@ -292,7 +307,7 @@ export function createBdStore(repoPath: string): BeadsStore {
 
     reopen(id, actor) {
       return serializeWrite(repoPath, async () => {
-        await runBdRaw(["reopen", id], rw(actor));
+        await steps.reopen(id, actor);
         return show(id);
       });
     },
@@ -358,7 +373,7 @@ export function createBdStore(repoPath: string): BeadsStore {
 
     async doctor(): Promise<DoctorInfo> {
       try {
-        const { stdout } = await pExecFile(BD_BIN, ["--version"], { cwd: repoPath });
+        const { stdout } = await pExecFile(BD_BIN, ["--version"], { cwd: repoPath, timeout: 5000 });
         return {
           kind: "bd",
           ok: true,

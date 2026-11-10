@@ -96,7 +96,7 @@ export class ReverseError extends Error {
   }
 }
 
-type ReverseStore = Pick<BeadsStore, "get" | "reopen" | "addComment" | "setMetadata" | "setStatus">;
+export type ReverseStore = Pick<BeadsStore, "get" | "reopen" | "addComment" | "setMetadata" | "setStatus">;
 
 /**
  * Reverse a manager's answer: reopen, the operator's comment, unset

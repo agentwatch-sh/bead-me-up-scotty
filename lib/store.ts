@@ -28,6 +28,9 @@ export interface SlotSteps {
   /** `bd show`; null when the item does not exist. */
   get(id: string): Promise<Bead | null>;
   show(id: string): Promise<Bead>;
+  /** `bd comments ID`; `show` leaves the comments out. */
+  comments(id: string): Promise<Comment[]>;
+  reopen(id: string, actor: string): Promise<void>;
   addComment(id: string, text: string, actor: string): Promise<void>;
   close(id: string, actor: string, reason?: string): Promise<void>;
   removeLabel(id: string, label: string, actor: string): Promise<void>;

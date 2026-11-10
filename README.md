@@ -564,7 +564,11 @@ Use `SCOTTY_TEST_BD` to select bd and `SCOTTY_BROWSER_EXECUTABLE` to select a he
 Run `node scripts/test-human-choices-api.mjs`, `node scripts/test-human-decline-api.mjs`, `node scripts/test-human-choices-ui.mjs`, and `node scripts/test-human-note-ui.mjs` on those fixtures.
 Run `node scripts/test-human-note.mjs` for the pure checks of a note in the human route.
 An answer takes one slot of the board's bd queue: its steps (read, comment, close, read) run back to back, and a list request made meanwhile runs after the close.
-Run `node scripts/test-human-answer-slot.mjs` for those checks (a fake bd; no server or board).
+A To Review Accept or Reverse takes one slot the same way.
+An answer is written once: when the actor's newest comment on the item already holds the same text (an earlier try saved it), only the close runs.
+A close that fails after the answer is saved answers 500 `answer_saved_close_failed` ("Your answer is saved; closing failed: try again.").
+Each bd call stops after 60 seconds (`SCOTTY_BD_TIMEOUT_MS` overrides it) with the code `bd_timeout`, so a hung call never holds a board's queue.
+Run `node scripts/test-human-answer-slot.mjs` for those checks (a fake bd, and a sleeping fake bd in a temporary folder; no server or board).
 An answered item leaves Needs You (or To Review) at the click and shows "Sending…"; a short confirmation follows the write.
 An older list that arrives meanwhile never brings it back; a failed write brings it back in its place with its error and what was typed.
 Run `node scripts/test-answer-outbox.mjs` for the pure rules.

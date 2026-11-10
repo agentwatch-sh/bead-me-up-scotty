@@ -25,6 +25,8 @@ export const demoStore: BeadsStore = {
     return fn({
       get: (id) => demoStore.get(id),
       show: async (id) => ({ ...find(id) }),
+      comments: (id) => demoStore.comments(id),
+      reopen: async (id, actor) => { await demoStore.reopen(id, actor); },
       addComment: async (id, text, actor) => { await demoStore.addComment(id, text, actor); },
       close: async (id, actor, reason) => { await demoStore.setStatus(id, "closed", actor, reason); },
       removeLabel: async (id, label, actor) => { await demoStore.removeLabel(id, label, actor); },
