@@ -34,12 +34,10 @@ export function HumanQuestionnaire({ bead, initialQuestions, route, disabled: he
     void outbox.send({
       id: bead.id,
       kind: route?.kind ?? (action === "dismiss" ? "dismiss" : "answers"),
-      // The click time goes with the answer; a retry of the same answer keeps it, so the board writes it once.
-      request: (signal, clickedAt) => (route ? route.request(body, signal)
-        : api.human.answer(projectId, bead.id, { ...body, answered_at: new Date(clickedAt).toISOString() }, signal)),
+      // The click's id goes with the answer; a retry of the same answer keeps it, so the board writes it once.
+      request: (signal, clickId) => (route ? route.request(body, signal, clickId)
+        : api.human.answer(projectId, bead.id, { ...body, click_id: clickId }, signal)),
       fingerprint: JSON.stringify(body),
-      // A respond writes the group's comment: a re-read checks it is the actor's newest.
-      comment: !route && action === "respond" ? body.text ?? null : null,
       draft: drafts,
       warning: route?.warning,
     });

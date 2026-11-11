@@ -4,11 +4,11 @@ import { parseChoices, choiceSnapshot, renderChoice, isMultiSelect, selectionSna
 import { REVIEW_KEY } from "./review";
 
 export const humanBodySchema = z.discriminatedUnion("action", [
-  // `answered_at`: when the person clicked (the page's clock); a retry of the same answer keeps it (age-6mk).
-  z.object({ action: z.literal("decline"), text: z.string().min(1).max(4000).refine((value) => value.trim().length > 0), answered_at: z.string().max(64).optional() }),
+  // `click_id`: the id of the click that sent it; a retry of the same click keeps it (age-6mk, lib/answer-click.ts).
+  z.object({ action: z.literal("decline"), text: z.string().min(1).max(4000).refine((value) => value.trim().length > 0), click_id: z.string().max(64).optional() }),
   // `note`: what the person typed with a choice; `text` holds it too, in the canonical comment.
-  z.object({ action: z.literal("respond"), text: z.string().min(1), choice: z.unknown().optional(), choices: z.unknown().optional(), answers: z.unknown().optional(), note: z.string().optional(), answered_at: z.string().max(64).optional() }),
-  z.object({ action: z.literal("dismiss"), text: z.string().optional(), choice: z.unknown().optional(), answers: z.unknown().optional(), note: z.string().optional(), answered_at: z.string().max(64).optional() }),
+  z.object({ action: z.literal("respond"), text: z.string().min(1), choice: z.unknown().optional(), choices: z.unknown().optional(), answers: z.unknown().optional(), note: z.string().optional(), click_id: z.string().max(64).optional() }),
+  z.object({ action: z.literal("dismiss"), text: z.string().optional(), choice: z.unknown().optional(), answers: z.unknown().optional(), note: z.string().optional(), click_id: z.string().max(64).optional() }),
 ]);
 export type HumanBody = z.infer<typeof humanBodySchema>;
 
@@ -90,6 +90,9 @@ export function validateHumanAnswer(item: Bead | null, body: HumanBody, opts: { 
       return fail(400, "The choice comment does not match the selection.", "invalid_choice_text");
     }
   }
+  // A plain free-text Respond needs an open question too, like every other answer with a
+  // comment: a comment after someone else's close is discussion, never the answer (age-6mk).
+  if (body.action === "respond" && !answerable(item)) return fail(409, "This question is no longer waiting for an answer.", "stale_question");
   const comment = body.action === "respond" || body.choice !== undefined || body.text !== undefined ? body.text! : null;
   return { ok: true, comment, reason: body.action === "respond" ? "Responded" : "Dismissed" };
 }

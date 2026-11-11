@@ -51,6 +51,10 @@ assert.deepEqual({ ...check(legacy, { action: "dismiss" }) }, { ok: true, commen
 assert.equal(check(legacy, { action: "dismiss", text: "  " }).code, "invalid_note", "a blank comment is no comment to keep");
 assert.equal(check(legacy, { action: "dismiss", note, text: "Fine." }).code, "invalid_note", "a note goes with a choice");
 assert.equal(check({ ...legacy, status: "closed" }, { action: "dismiss", text: "Fine, but log it." }).code, "stale_question", "a closed item gets no late comment");
+// A plain free-text Respond needs an open question too (age-6mk): a comment after the close is discussion.
+assert.equal(check({ ...legacy, status: "closed" }, { action: "respond", text: "Late words." }).code, "stale_question", "a closed item gets no late plain answer");
+assert.equal(check({ ...legacy, labels: ["question"] }, { action: "respond", text: "Late words." }).code, "stale_question", "nor an item without the human label");
+assert.equal(check(legacy, { action: "respond", text: "In time." }).ok, true);
 // Decline: the typed text is the reason.
 assert.deepEqual({ ...check(single, { action: "decline", text: "The premise is wrong." }) }, { ok: true, comment: "The person declined this question: The premise is wrong.\n\n```board-decline\n{\"version\":1,\"text\":\"The premise is wrong.\"}\n```", reason: "Declined" });
 // A grouped answer keeps each question's note.

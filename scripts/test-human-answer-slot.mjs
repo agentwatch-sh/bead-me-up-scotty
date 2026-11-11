@@ -35,7 +35,7 @@ const options = [];
 let item;
 const fail = new Set();
 let now = 0;
-// A fake clock in seconds: iso(s) is a time on it; at() takes the next second.
+// A fake clock in seconds, for the comments' times: at() takes the next second.
 const iso = (s) => new Date(Date.UTC(2026, 10, 10, 12, 0, 0) + s * 1000).toISOString();
 const at = () => iso(now++);
 const shown = () => ({ ...item, comments: undefined, comment_count: item.comments.length });
@@ -83,28 +83,36 @@ const store = createBdStore("/nonexistent-repo");
 const question = (metadata = {}, comments = []) => ({ id: "q-1", title: "Q", status: "open", issue_type: "task", priority: 2, labels: ["human", "question"], metadata, comments });
 const calls = () => log.filter(([at]) => at === "start").map(([, c]) => c);
 const reset = (metadata, comments) => { log.length = 0; options.length = 0; fail.clear(); item = question(metadata, comments); };
-// Each answer carries its click time (answered_at), as the page sends it; null sends none.
-const answer = (body, keepOpen = false, clickedAt = iso(now)) =>
-  answerHuman(store, "q-1", clickedAt === null ? body : { ...body, answered_at: clickedAt }, { actor: ACTOR, keepOpen, log: () => {} });
+// Each answer carries the id of its click (click_id), as the page sends it; null sends none.
+const CLICK = "click-a";
+const answer = (body, keepOpen = false, clickId = CLICK) =>
+  answerHuman(store, "q-1", clickId === null ? body : { ...body, click_id: clickId }, { actor: ACTOR, keepOpen, log: () => {} });
 const mine = () => item.comments.filter((c) => c.author === ACTOR);
+const mark = (id = CLICK) => ["update", "q-1", "--set-metadata", `scotty.answer_click=${id}`];
 
-// Respond on an item with no comment: show (validate), comment, close, show (the response).
+// Respond: show (validate), comment, the click's mark, close, show (the response).
 reset();
 let result = await answer({ action: "respond", text: "Use blue." });
 assert.equal(result.ok, true);
 assert.equal(result.bead.status, "closed");
-assert.deepEqual(calls(), [["show", "q-1", "--json"], ["comment", "q-1", "--", "Use blue."], ["close", "q-1", "--reason", "Responded"], ["show", "q-1", "--json"]]);
+assert.deepEqual(calls(), [["show", "q-1", "--json"], ["comment", "q-1", "--", "Use blue."], mark(), ["close", "q-1", "--reason", "Responded"], ["show", "q-1", "--json"]]);
+assert.equal(item.metadata["scotty.answer_click"], CLICK);
 
-// A bare Dismiss writes no comment.
+// A bare Dismiss writes no comment; its mark comes before the close.
 reset();
 result = await answer({ action: "dismiss" });
-assert.deepEqual(calls(), [["show", "q-1", "--json"], ["close", "q-1", "--reason", "Dismissed"], ["show", "q-1", "--json"]]);
+assert.deepEqual(calls(), [["show", "q-1", "--json"], mark(), ["close", "q-1", "--reason", "Dismissed"], ["show", "q-1", "--json"]]);
 
-// A decline: its comment, then the close as Declined.
+// A decline: its comment, the mark, then the close as Declined.
 reset();
 result = await answer({ action: "decline", text: "The premise is wrong." });
+assert.deepEqual(calls().map((c) => c[0]), ["show", "comment", "update", "close", "show"]);
+assert.deepEqual(calls()[3], ["close", "q-1", "--reason", "Declined"]);
+
+// A page that sends no click id (an older build): the answer is written, with no mark.
+reset();
+result = await answer({ action: "respond", text: "Use blue." }, false, null);
 assert.deepEqual(calls().map((c) => c[0]), ["show", "comment", "close", "show"]);
-assert.deepEqual(calls()[2], ["close", "q-1", "--reason", "Declined"]);
 
 // A refused answer reads the item and writes nothing.
 reset();
@@ -117,63 +125,66 @@ assert.deepEqual(calls(), [["show", "q-1", "--json"]]);
 // An item with a manager's review record: the cleanup comes after the close, then one show.
 reset({ "board.review": "pending", "board.review_by": MANAGER, "board.review_reason": "r", "board.acked": "true" });
 result = await answer({ action: "respond", text: "Mine." });
-assert.deepEqual(calls(), [["show", "q-1", "--json"], ["comment", "q-1", "--", "Mine."], ["close", "q-1", "--reason", "Responded"],
+assert.deepEqual(calls(), [["show", "q-1", "--json"], ["comment", "q-1", "--", "Mine."], mark(), ["close", "q-1", "--reason", "Responded"],
   ["update", "q-1", "--unset-metadata", "board.review", "--unset-metadata", "board.review_by", "--unset-metadata", "board.review_reason", "--unset-metadata", "board.acked"],
   ["show", "q-1", "--json"]]);
-// A failed cleanup keeps the answer: the close stands, and the response is the item.
+// A failed mark and a failed cleanup keep the answer: the close stands, and the response is the item.
 reset({ "board.review": "pending" });
 fail.add("update");
 result = await answer({ action: "dismiss" });
 assert.equal(result.ok, true);
 assert.equal(result.bead.status, "closed");
-assert.deepEqual(calls().map((c) => c[0]), ["show", "close", "update", "show"]);
+assert.deepEqual(calls().map((c) => c[0]), ["show", "update", "close", "update", "show"]);
 
 // SCOTTY_HUMAN_RESPOND=keep-open: the label goes, the item stays open.
 reset();
 result = await answer({ action: "respond", text: "Open." }, true);
-assert.deepEqual(calls(), [["show", "q-1", "--json"], ["comment", "q-1", "--", "Open."], ["update", "q-1", "--remove-label", "human"], ["show", "q-1", "--json"]]);
-console.log("PASS human answer calls: show, comment, close, show; no show after the comment; review cleanup; keep-open; refusals");
+assert.deepEqual(calls(), [["show", "q-1", "--json"], ["comment", "q-1", "--", "Open."], mark(), ["update", "q-1", "--remove-label", "human"], ["show", "q-1", "--json"]]);
+console.log("PASS human answer calls: show, comment, the click's mark, close, show; review cleanup; keep-open; no click id; refusals");
 
-// ---- The answer is written once, and only a retry of the same click is one (I1; re-check Important 2) ----
+// ---- An answer is written once per click: the click id, no clocks (re-check rv-6mk-c) ----
 const BODY = { action: "respond", text: "Use blue." };
-// An item that holds comments: they are read, to find the newest.
-reset({}, [{ author: "agent:a", text: "Context.", created_at: at() }]);
-result = await answer(BODY);
-assert.deepEqual(calls().map((c) => c[0]), ["show", "comments", "comment", "close", "show"]);
-// A failed close after the comment: the answer is saved, and the route says so.
+// A failed close after the comment: the answer and its mark are saved, and the route says so.
 reset();
-const click = iso(now);
 fail.add("close");
-result = await answer(BODY, false, click);
+result = await answer(BODY);
 assert.deepEqual({ ...result }, { ok: false, status: 500, code: "answer_saved_close_failed", error: "Your answer is saved; closing failed: try again." });
-assert.deepEqual(calls().map((c) => c[0]), ["show", "comment", "close"]);
+assert.deepEqual(calls().map((c) => c[0]), ["show", "comment", "update", "close"]);
 assert.equal(mine().length, 1);
-// The retry of the same click (its answered_at) finds that comment as the item's newest: it only closes.
+// A retry of the same click, whenever it comes: the mark is this click's, so it only closes.
 fail.clear();
 log.length = 0;
-now += 120; // a retry two minutes later still carries the click
-result = await answer(BODY, false, click);
+result = await answer(BODY);
 assert.equal(result.ok, true);
-assert.deepEqual(calls().map((c) => c[0]), ["show", "comments", "close", "show"]);
+assert.deepEqual(calls().map((c) => c[0]), ["show", "close", "show"]);
 assert.equal(mine().length, 1, "one answer comment after the failed close and the retry");
-// Every other case writes the answer: it is a new answer, not a retry.
-for (const [name, comments] of [
-  ["another text", () => [{ author: ACTOR, text: "Other words.", created_at: at() }]],
-  ["the same text by another author", () => [{ author: "agent:a", text: "Use blue.", created_at: at() }]],
-  ["the actor's same text, then a newer comment of the actor", () => [{ author: ACTOR, text: "Use blue.", created_at: at() }, { author: ACTOR, text: "Later words.", created_at: at() }]],
-  ["the actor's same text, then another author's question", () => [{ author: ACTOR, text: "Use blue.", created_at: at() }, { author: "agent:a", text: "Are you sure?", created_at: at() }]],
-  ["the actor's same text from before the click", () => [{ author: ACTOR, text: "Use blue.", created_at: iso(now - 60) }]],
-]) {
-  reset({}, comments());
-  await answer(BODY);
-  assert.deepEqual(calls().map((c) => c[0]), ["show", "comments", "comment", "close", "show"], name);
-  assert.equal(mine().at(-1).text, "Use blue.", name);
-}
-// A page that sends no click time (an older build): the answer is written, and with no
-// click there is no retry to look for, so the comments are not read.
-reset({}, [{ author: ACTOR, text: "Use blue.", created_at: at() }]);
-await answer(BODY, false, null);
-assert.deepEqual(calls().map((c) => c[0]), ["show", "comment", "close", "show"]);
+// The first try worked but its response was lost: the retry of the same click is a success with no write.
+log.length = 0;
+result = await answer(BODY);
+assert.equal(result.ok, true);
+assert.deepEqual(calls().map((c) => c[0]), ["show"], "no write: this click's answer is there");
+assert.equal(mine().length, 1);
+// An edited answer is a new click: its comment is written, also over an earlier click's saved comment.
+reset();
+fail.add("close");
+await answer(BODY);
+fail.clear();
+log.length = 0;
+result = await answer({ action: "respond", text: "Use green." }, false, "click-b");
+assert.equal(result.ok, true);
+assert.deepEqual(calls().map((c) => c[0]), ["show", "comment", "update", "close", "show"]);
+assert.deepEqual(mine().map((c) => c.text), ["Use blue.", "Use green."]);
+assert.equal(item.metadata["scotty.answer_click"], "click-b");
+// A later answer with the same words (the agent reopened and asked again) is a new click: written.
+reset({ "scotty.answer_click": CLICK }, [{ author: ACTOR, text: "Use blue.", created_at: at() }, { author: "agent:a", text: "Are you sure?", created_at: at() }]);
+await answer(BODY, false, "click-c");
+assert.deepEqual(calls().map((c) => c[0]), ["show", "comment", "update", "close", "show"]);
+// The mark fails after the comment: the answer goes on; a retry would write the comment again (the known limit).
+reset();
+fail.add("update");
+result = await answer(BODY);
+assert.equal(result.ok, true);
+assert.deepEqual(calls().map((c) => c[0]), ["show", "comment", "update", "close", "show"]);
 // A bare Dismiss saved no answer: its failed close fails the request as bd failed.
 reset();
 fail.add("close");
@@ -182,36 +193,41 @@ await assert.rejects(answer({ action: "dismiss" }), /close refused/);
 reset();
 fail.add("comment");
 await assert.rejects(answer(BODY), /comment refused/);
-console.log("PASS human answer once: only a retry of the same click skips the comment; a later question gets a new answer");
+console.log("PASS human answer once: a retry of the same click only closes or is done; an edited or later answer is a new click");
 
-// ---- An answer that an earlier try of the same click already closed is a success (re-check Minor 2) ----
-const closedBy = (reason, comment) => {
-  reset({}, comment ? [comment] : []);
-  item = { ...item, status: "closed", close_reason: reason, closed_at: at() };
-};
-const WORDS = { action: "dismiss", text: "Fine." };
-for (const [body, reason] of [[BODY, "Responded"], [WORDS, "Dismissed"]]) {
-  const click = iso(now);
-  closedBy(reason, { author: ACTOR, text: body.text, created_at: iso(now + 1) });
-  const done = await answer(body, false, click);
+// ---- Done, stale, and the old gap (re-check rv-6mk-c, Important 3) ----
+const closedAs = (reason, metadata = {}) => { reset(metadata); item = { ...item, status: "closed", close_reason: reason, closed_at: at() }; };
+// Closed by this click (Respond, Dismiss with words, Decline): a success with no write.
+for (const [body, reason] of [[BODY, "Responded"], [{ action: "dismiss", text: "Fine." }, "Dismissed"], [{ action: "decline", text: "No." }, "Declined"]]) {
+  closedAs(reason, { "scotty.answer_click": CLICK });
+  const done = await answer(body);
   assert.equal(done.ok, true, reason);
-  assert.equal(done.bead.status, "closed");
-  assert.deepEqual(calls().map((c) => c[0]), ["show", "comments"], `${reason}: no write, the answer is there`);
+  assert.deepEqual(calls().map((c) => c[0]), ["show"], `${reason}: no write`);
 }
-// Any other closed item is refused as stale. (A Dismiss with words: the rules refuse it on a
-// closed item. A plain free-text Respond is not refused on a closed item, before this change too.)
-for (const [name, reason, comment] of [
-  ["closed as another reason", "Responded", () => ({ author: ACTOR, text: "Fine.", created_at: iso(now + 1) })],
-  ["closed with another author's words", "Dismissed", () => ({ author: MANAGER, text: "Fine.", created_at: iso(now + 1) })],
-  ["closed with the actor's same words from before the click", "Dismissed", () => ({ author: ACTOR, text: "Fine.", created_at: iso(now - 60) })],
-]) {
-  const click = iso(now);
-  closedBy(reason, comment());
-  const refused = await answer(WORDS, false, click);
-  assert.equal(refused.ok, false, name);
-  assert.equal(refused.code, "stale_question", name);
+// Keep-open done by this click: open, the label gone, the mark: a success with no write.
+reset({ "scotty.answer_click": CLICK });
+item = { ...item, labels: ["question"] };
+assert.equal((await answer(BODY, true)).ok, true);
+assert.deepEqual(calls().map((c) => c[0]), ["show"]);
+// Closed by someone else (a plain bd close, no mark): every answer is stale, a plain Respond too.
+for (const body of [BODY, { action: "dismiss", text: "Fine." }, { action: "decline", text: "No." }]) {
+  closedAs("Responded");
+  const refused = await answer(body);
+  assert.equal(refused.ok, false, body.action);
+  assert.equal(refused.code, "stale_question", body.action);
+  assert.deepEqual(calls().map((c) => c[0]), ["show"], `${body.action}: no comment call`);
 }
-console.log("PASS human answer once: a closed item that holds this click's answer is a success; any other closed item is stale");
+// Closed by another click's answer: stale for this click.
+closedAs("Responded", { "scotty.answer_click": "click-z" });
+assert.equal((await answer(BODY)).code, "stale_question");
+// The done-path never passes a manager's answer that waits for review: it points to To Review.
+closedAs("Responded", { "scotty.answer_click": CLICK, "board.review": "pending" });
+assert.equal((await answer(BODY)).code, "manager_answered");
+// A keep-open item someone else finished (label gone, no mark): a plain Respond is stale.
+reset();
+item = { ...item, labels: ["question"] };
+assert.equal((await answer(BODY, true)).code, "stale_question");
+console.log("PASS human answer: this click's done item is a success; any other closed item is stale, a plain Respond too");
 
 // ---- A list made during an answer waits for the whole answer ----
 reset();
@@ -221,7 +237,7 @@ await new Promise((done) => setTimeout(done, 5));
 const listing = store.list();
 const [answered, listed] = await Promise.all([answering, listing]);
 assert.equal(answered.ok, true);
-assert.deepEqual(calls().map((c) => c[0]), ["show", "comment", "close", "show", "export"]);
+assert.deepEqual(calls().map((c) => c[0]), ["show", "comment", "update", "close", "show", "export"]);
 // Nothing overlaps: each call ends before the next one starts.
 for (let i = 0; i < log.length; i += 2) {
   assert.equal(log[i][0], "start");
@@ -231,37 +247,43 @@ for (let i = 0; i < log.length; i += 2) {
 assert.equal(listed[0].status, "closed", "the list made during the answer shows the item closed");
 console.log("PASS one slot per answer: a list made during an answer runs its export after the close");
 
-// ---- To Review: Accept and Reverse take one slot too ----
-const reviewed = () => {
-  reset({ "board.review": "pending", "board.review_by": MANAGER, "board.review_reason": "Blue." }, [{ author: MANAGER, text: "Use blue.", created_at: at() }]);
+// ---- To Review: Accept and Reverse take one slot too, and carry the click's mark ----
+const reviewed = (metadata = {}) => {
+  reset({ "board.review": "pending", "board.review_by": MANAGER, "board.review_reason": "Blue.", ...metadata }, [{ author: MANAGER, text: "Use blue.", created_at: at() }]);
   item = { ...item, status: "closed", close_reason: "Responded", closed_at: at() };
 };
-const review = (body) => answerReview(store, "q-1", body, { actor: ACTOR, now: () => "2026-11-10T12:00:00Z", log: () => {} });
+const review = (body, clickId = CLICK) => answerReview(store, "q-1", clickId === null ? body : { ...body, click_id: clickId }, { actor: ACTOR, now: () => "2026-11-10T12:00:00Z", log: () => {} });
 reviewed();
 let reviewing = review({ action: "accept" });
 await new Promise((done) => setTimeout(done, 5));
 let [accepted, afterAccept] = await Promise.all([reviewing, store.list()]);
 assert.equal(accepted.ok, true);
 assert.equal(accepted.bead.metadata["board.review"], "accepted");
+assert.equal(accepted.bead.metadata["scotty.answer_click"], CLICK, "the Accept carries the click's mark, in its review write");
 assert.deepEqual(calls().map((c) => c[0]), ["show", "comments", "update", "show", "export"]);
 assert.equal(afterAccept[0].metadata["board.review"], "accepted", "the list made during the Accept runs after it");
+// A retry of the same click after a lost response: a success with no write.
+log.length = 0;
+const again = await review({ action: "accept" });
+assert.equal(again.ok, true);
+assert.deepEqual(calls().map((c) => c[0]), ["show"]);
 reviewed();
 reviewing = review({ action: "reverse", answer: { action: "respond", text: "Use green." } });
 await new Promise((done) => setTimeout(done, 5));
 const [reversed, afterReverse] = await Promise.all([reviewing, store.list()]);
 assert.equal(reversed.ok, true);
 assert.equal(reversed.bead.metadata["board.review"], "reversed");
+assert.equal(reversed.bead.metadata["scotty.answer_click"], CLICK, "the Reverse carries the click's mark, in its review record");
 assert.equal(calls().at(-1)[0], "export", "the list made during the Reverse runs after all of its steps");
 assert.equal(afterReverse[0].metadata["board.review"], "reversed");
 for (let i = 0; i < log.length; i += 2) assert.deepEqual(log[i + 1][1], log[i][1], "no step of the Reverse overlaps another call");
-// A refusal reads and writes nothing more.
-reviewed();
-item = { ...item, metadata: { ...item.metadata, "board.review": "accepted" } };
+// A refusal reads and writes nothing more; another click's Accept is not this one.
+reviewed({ "board.review": "accepted", "scotty.answer_click": "click-z" });
 const refused = await review({ action: "accept" });
 assert.equal(refused.ok, false);
 assert.equal(refused.code, "not_pending");
 assert.deepEqual(calls().map((c) => c[0]), ["show", "comments"]);
-console.log("PASS one slot per review: a list made during an Accept or a Reverse runs after it");
+console.log("PASS one slot per review: a list made during an Accept or a Reverse runs after it; the click's mark; a retry is done");
 
 // ---- Every bd call has a time limit ----
 assert.ok(options.length > 0 && options.every((o) => o.timeout === 60000), "every bd call runs with a 60 s execFile timeout");

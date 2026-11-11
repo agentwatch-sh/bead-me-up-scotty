@@ -285,6 +285,8 @@ try {
     assert.equal(await panelOf(item).getByRole("textbox", { name: "Write an answer" }).inputValue(), typed, "the typed text is back");
     await page.locator(`[data-closed-meanwhile="${item}"]`).getByText("This question was closed meanwhile; your answer is not saved.").waitFor();
     assert.equal(await toast(`Responded to ${item}`).count(), 0, "the manager's close never reads as the operator's answer");
+    // The page shows the item as the board has it now: its form is disabled at once, no second click.
+    assert.equal(await panelOf(item).getByRole("button", { name: "Respond", exact: true }).isDisabled(), true, "the closed item's form is disabled");
     await page.unroute(`**/beads/${item}/human`);
     // A fresh list shows the item closed: the card stays until the operator dismisses it.
     const listed = page.waitForResponse((r) => r.request().method() === "GET" && new URL(r.url()).pathname.endsWith(listPath));
@@ -296,6 +298,37 @@ try {
     await panelOf(item).waitFor({ state: "detached" });
     assert.equal(mine(item).length, 0, "the operator's answer was not written");
     console.log("PASS answer speed: a manager's close during a failed request is not the operator's answer; the card stays with its error and text");
+  }
+
+  // ---- The operator clicks on a stale card after a manager closed the item: refused, nothing written ----
+  {
+    const typed = "Ship it on Monday.";
+    const item = create("A stale card?", null);
+    const panel = await visit(item);
+    await panel.getByRole("textbox", { name: "Write an answer" }).fill(typed);
+    // The page keeps the list it has: every list request gets the one from before the close.
+    const before = await (await page.request.get(`${base}${listPath}`)).json();
+    await page.route(`**${listPath}`, (route) => route.fulfill({ json: before }));
+    run(MANAGER, ["close", item, "--reason", "Responded"]); // a plain close, no comment
+    await page.route(`**/beads/${item}/human`, async (route) => {
+      await new Promise((done) => setTimeout(done, 1000));
+      await route.continue();
+    });
+    await leaves(panel, () => panel.getByRole("button", { name: "Respond", exact: true }).click());
+    await panelOf(item).getByRole("alert").waitFor();
+    assert.match(await panelOf(item).getByRole("alert").innerText(), /no longer waiting for an answer/);
+    assert.equal(await panelOf(item).getByRole("textbox", { name: "Write an answer" }).inputValue(), typed, "the typed text is back");
+    assert.equal(mine(item).length, 0, "no late comment after someone else's close");
+    assert.equal(show(item).close_reason, "Responded");
+    // With a fresh list the card says the question was closed meanwhile.
+    await page.unroute(`**${listPath}`);
+    await page.unroute(`**/beads/${item}/human`);
+    const listed = page.waitForResponse((r) => r.request().method() === "GET" && new URL(r.url()).pathname.endsWith(listPath));
+    await refetch();
+    await listed;
+    await page.locator(`[data-closed-meanwhile="${item}"]`).getByRole("button", { name: "OK", exact: true }).click();
+    await panelOf(item).waitFor({ state: "detached" });
+    console.log("PASS answer speed: a click on a stale card after a manager's close is refused as stale, with nothing written");
   }
 
   // ---- The board's own bd is slower than the page's 30 s (re-check Minor 1, Minor 3) ----

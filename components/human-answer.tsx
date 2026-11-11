@@ -47,12 +47,10 @@ function SingleHumanAnswer({ bead, route, disabled: held }: { bead: Bead; route?
   const send = (kind: OutboxKind, body: HumanBody) => void outbox.send({
     id: bead.id,
     kind: route?.kind ?? kind,
-    // The click time goes with the answer; a retry of the same answer keeps it, so the board writes it once.
-    request: (signal, clickedAt) => (route ? route.request(body, signal)
-      : api.human.answer(projectId, bead.id, { ...body, answered_at: new Date(clickedAt).toISOString() }, signal)),
+    // The click's id goes with the answer; a retry of the same answer keeps it, so the board writes it once.
+    request: (signal, clickId) => (route ? route.request(body, signal, clickId)
+      : api.human.answer(projectId, bead.id, { ...body, click_id: clickId }, signal)),
     fingerprint: JSON.stringify(body),
-    // A respond writes its text: a re-read checks it is the actor's newest comment.
-    comment: !route && kind === "respond" && body.action === "respond" ? body.text : null,
     draft: { text, selected } satisfies SingleDraft,
     warning: route?.warning,
   });

@@ -1,7 +1,7 @@
 import type { HumanBody } from "@/lib/human-validate";
 import { renderChoice, renderGroup, type QuestionAnswer, type HumanChoice } from "@/lib/human-choices";
 import { basePath } from "./base-path";
-import type { Bead, Comment, CreateInput, UpdateInput, DepType } from "./schema";
+import type { Bead, CreateInput, UpdateInput, DepType } from "./schema";
 import type { UpdateStatus, UpdateResult, UpdateChannel, UpdateTarget } from "./update-types";
 
 export interface Meta {
@@ -196,7 +196,6 @@ export const api = {
   }),
   list: (projectId: string) => request<BeadsResponse>(`${base(projectId)}/beads`),
   get: (projectId: string, id: string, signal?: AbortSignal) => request<Bead>(`${base(projectId)}/beads/${enc(id)}`, { signal }),
-  comments: (projectId: string, id: string, signal?: AbortSignal) => request<Comment[]>(`${base(projectId)}/beads/${enc(id)}/comments`, { signal }),
   create: (projectId: string, input: CreateInput) =>
     request<Bead>(`${base(projectId)}/beads`, { method: "POST", body: JSON.stringify(input) }),
   update: (projectId: string, id: string, patch: UpdateInput) =>
@@ -259,16 +258,16 @@ export const api = {
 
   // Review a manager's answer to an agent's question: keep it, or reverse it.
   review: {
-    accept: (projectId: string, id: string, signal?: AbortSignal) =>
+    accept: (projectId: string, id: string, signal?: AbortSignal, clickId?: string) =>
       request<Bead>(`${base(projectId)}/beads/${enc(id)}/review`, {
         method: "POST",
-        body: JSON.stringify({ action: "accept" }),
+        body: JSON.stringify({ action: "accept", ...(clickId ? { click_id: clickId } : {}) }),
         signal,
       }),
-    reverse: (projectId: string, id: string, answer: HumanBody, signal?: AbortSignal) =>
+    reverse: (projectId: string, id: string, answer: HumanBody, signal?: AbortSignal, clickId?: string) =>
       request<Bead & { warning?: string }>(`${base(projectId)}/beads/${enc(id)}/review`, {
         method: "POST",
-        body: JSON.stringify({ action: "reverse", answer }),
+        body: JSON.stringify({ action: "reverse", answer, ...(clickId ? { click_id: clickId } : {}) }),
         signal,
       }),
   },

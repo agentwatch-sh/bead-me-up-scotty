@@ -1,5 +1,5 @@
-import type { Bead, Comment } from "./schema";
-import { CLOCK_SKEW_MS, actorWroteAfter } from "./answer-match";
+import type { Bead } from "./schema";
+import { markedBy } from "./answer-click";
 
 /**
  * The answer outbox (agentwatch board age-6mk): the operator's answers and
@@ -172,59 +172,29 @@ export function failureText(e: unknown): string {
   return typeof message === "string" && message ? message : "The answer could not be saved.";
 }
 
-/** What one answer sent: its click time, the comment it writes (or none), and who sent it. */
+/** What one answer sent: the id of its click (lib/answer-click.ts). */
 export interface SentAnswer {
-  /** The click (ms, this browser's clock); a retry of the same answer keeps it. */
-  at: number;
-  comment: string | null;
-  /** The board user's actor (`human:<user>`). */
-  actor: string;
+  clickId: string;
 }
-
-/** At or after the click, allowing for the clocks' skew. */
-const sinceClick = (value: unknown, at: number) => {
-  const ms = typeof value === "string" ? Date.parse(value) : NaN;
-  return !Number.isNaN(ms) && ms >= at - CLOCK_SKEW_MS;
-};
-/** The record names the actor, or does not say who. */
-const byActor = (value: unknown, actor: string) => value === undefined || value === null || value === "" || value === actor;
 
 /**
- * Does the item, read again with its comments, show THIS answer (re-check
- * rv-6mk-b, Important 1)? Someone else's close of the item (a manager's answer
- * while the operator's request failed) never counts:
- *  - a comment answer (respond, a group): the actor's newest comment is the sent
- *    text, written after the click, and the item is closed as "Responded", or in
- *    keep-open mode open without the `human` label;
- *  - dismiss, decline: closed with their reason, at or after the click, and by
- *    the actor when the record says who;
- *  - accept, reverse: the review record, at or after the click, by the actor.
+ * Does the item, read again, show THIS click's answer (re-check rv-6mk-c)? The
+ * route marks the item with the click's id inside its queue slot (after the
+ * comment, before the close; with the review record for Accept and Reverse), so
+ * the item says which click answered it, with no clock involved. Someone else's
+ * close or comment never carries this click's id. A Needs You answer also needs
+ * the item done (closed, or in keep-open mode open without the `human` label):
+ * the mark alone means the comment is saved and the close may have failed.
  */
-export function answerLanded(kind: OutboxKind, bead: Partial<Bead> | null | undefined, comments: readonly Comment[], sent: SentAnswer): boolean {
-  if (!bead) return false;
-  const closedAs = (reason: string) => bead.status === "closed" && bead.close_reason === reason;
-  const record = (bead as { closed_by?: unknown }).closed_by;
-  switch (kind) {
-    case "respond":
-    case "answers": {
-      const closedOrKeptOpen = closedAs("Responded") || (bead.status !== "closed" && !(bead.labels ?? []).includes("human"));
-      return closedOrKeptOpen && sent.comment !== null && actorWroteAfter(comments, sent.comment, sent.actor, sent.at);
-    }
-    case "dismiss":
-    case "decline":
-      return closedAs(kind === "dismiss" ? "Dismissed" : "Declined") && sinceClick(bead.closed_at, sent.at) && byActor(record, sent.actor);
-    case "accept":
-    case "reverse": {
-      const metadata = bead.metadata ?? {};
-      return metadata["board.review"] === (kind === "accept" ? "accepted" : "reversed")
-        && sinceClick(metadata["board.reviewed_at"], sent.at) && byActor(metadata["board.reviewed_by"], sent.actor);
-    }
-  }
+export function answerLanded(kind: OutboxKind, bead: Partial<Bead> | null | undefined, sent: SentAnswer): boolean {
+  if (!bead || !markedBy(bead.metadata, sent.clickId)) return false;
+  if (kind === "accept" || kind === "reverse") return bead.metadata?.["board.review"] === (kind === "accept" ? "accepted" : "reversed");
+  return bead.status === "closed" || !(bead.labels ?? []).includes("human");
 }
 
-/** The click time of an answer: a retry of the same answer (same fingerprint) keeps its first click. */
-export function clickFor(previous: { fingerprint: string; at: number } | undefined, fingerprint: string, now: number): number {
-  return previous && previous.fingerprint === fingerprint ? previous.at : now;
+/** The click id of an answer: a retry of the same answer (same fingerprint) keeps it; another answer is a new click. */
+export function clickIdFor(previous: { fingerprint: string; clickId: string } | undefined, fingerprint: string, newId: () => string): string {
+  return previous && previous.fingerprint === fingerprint ? previous.clickId : newId();
 }
 
 /** Is the item no longer waiting for this kind of answer on the board? */
@@ -244,3 +214,12 @@ export function keepsFailedCard(entry: OutboxEntry | undefined): boolean {
 
 /** The kinds of the Needs You answers; a form with a route (a Reverse) shows its route's kind only. */
 export const HUMAN_KINDS: readonly OutboxKind[] = ["respond", "dismiss", "decline", "answers"];
+
+/**
+ * Before a recheck confirms or settles: is its try still the item's latest send,
+ * and the item still failed and uncertain? (The operator may have sent again, or
+ * dealt with the failure, while the item was read: re-check rv-6mk-c, Minor 2.)
+ */
+export function recheckStillCurrent<A>(attemptNow: A | undefined, attemptThen: A, entryNow: OutboxEntry | undefined): boolean {
+  return attemptNow === attemptThen && entryNow?.state === "failed" && !!entryNow.uncertain;
+}

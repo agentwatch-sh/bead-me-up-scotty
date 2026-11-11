@@ -3,10 +3,12 @@ import type { Bead } from "./schema";
 import type { BeadsStore, SlotSteps } from "./store";
 import { humanBodySchema, validateHumanAnswer } from "./human-validate";
 import { ACKED_KEY, REVIEW_KEY, REVIEWED_BY_KEY, REVIEWED_AT_KEY, ReverseError, errorTag, needsReview, reverseAnswer, type ReverseStore } from "./review";
+import { ANSWER_CLICK_KEY, clickIdOf, markedBy } from "./answer-click";
 
 export const reviewBodySchema = z.discriminatedUnion("action", [
-  z.object({ action: z.literal("accept") }),
-  z.object({ action: z.literal("reverse"), answer: humanBodySchema }),
+  // `click_id`: the id of the click (lib/answer-click.ts); a retry of the same click keeps it.
+  z.object({ action: z.literal("accept"), click_id: z.string().max(64).optional() }),
+  z.object({ action: z.literal("reverse"), answer: humanBodySchema, click_id: z.string().max(64).optional() }),
 ]);
 export type ReviewBody = z.infer<typeof reviewBodySchema>;
 
@@ -51,9 +53,15 @@ function slotStore(s: SlotSteps): ReverseStore {
  */
 export async function answerReview(store: BeadsStore, id: string, body: ReviewBody, opts: ReviewOptions): Promise<ReviewResult> {
   const log = opts.log ?? ((line: string) => console.error(line));
+  const clickId = clickIdOf(body.click_id);
   return store.inOneSlot(async (s) => {
     // `bd show` leaves the comments out, and the latest answer decides.
     const found = await s.get(id);
+    // This click already made the review (its response was lost): done, no write.
+    const verdictKey = body.action === "accept" ? "accepted" : "reversed";
+    if (found && markedBy(found.metadata, clickId) && found.metadata?.[REVIEW_KEY] === verdictKey) return { ok: true, bead: found };
+    // The click's mark goes with the review record, never before it.
+    const mark: Record<string, string> = clickId === null ? {} : { [ANSWER_CLICK_KEY]: clickId };
     const item = found ? { ...found, comments: await s.comments(id) } : null;
     if (!item || !needsReview(item, opts.actor)) {
       return { ok: false, status: 409, error: "This answer is not waiting for your review.", code: "not_pending" };
@@ -63,6 +71,7 @@ export async function answerReview(store: BeadsStore, id: string, body: ReviewBo
         [REVIEW_KEY]: "accepted",
         [REVIEWED_BY_KEY]: opts.actor,
         [REVIEWED_AT_KEY]: opts.now(),
+        ...mark,
       }, opts.actor);
       return { ok: true, bead: await s.show(id) };
     }
@@ -73,7 +82,7 @@ export async function answerReview(store: BeadsStore, id: string, body: ReviewBo
     }
     try {
       const acked = item.metadata?.[ACKED_KEY] !== undefined && item.metadata?.[ACKED_KEY] !== null;
-      const { bead, warning } = await reverseAnswer(slotStore(s), id, verdict.comment, verdict.reason, opts.actor, acked, opts.now);
+      const { bead, warning } = await reverseAnswer(slotStore(s), id, verdict.comment, verdict.reason, opts.actor, acked, opts.now, mark);
       return warning ? { ok: true, bead, warning } : { ok: true, bead };
     } catch (e) {
       if (!(e instanceof ReverseError)) throw e;

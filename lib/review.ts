@@ -114,6 +114,8 @@ export async function reverseAnswer(
   actor: string,
   acked: boolean,
   now: () => string,
+  /** More keys for the final review record (the click's mark, lib/answer-click.ts). */
+  record: Record<string, string> = {},
 ): Promise<{ bead: Bead; warning?: "review_record_failed" }> {
   const reread = async (): Promise<Bead | null> => {
     try {
@@ -161,7 +163,7 @@ export async function reverseAnswer(
   try {
     const bead = await store.setMetadata(
       id,
-      { [REVIEW_KEY]: "reversed", [REVIEWED_BY_KEY]: actor, [REVIEWED_AT_KEY]: now() },
+      { [REVIEW_KEY]: "reversed", [REVIEWED_BY_KEY]: actor, [REVIEWED_AT_KEY]: now(), ...record },
       actor,
     );
     return { bead };

@@ -1,8 +1,8 @@
-import type { Bead, Comment } from "./schema";
-import type { BeadsStore, SlotSteps } from "./store";
+import type { Bead } from "./schema";
+import type { BeadsStore } from "./store";
 import { validateHumanAnswer, type HumanBody } from "./human-validate";
 import { ACKED_KEY, REVIEW_KEY, REVIEW_BY_KEY, REVIEW_REASON_KEY, errorTag } from "./review";
-import { actorWroteAfter, clickTime, savedByThisClick } from "./answer-match";
+import { ANSWER_CLICK_KEY, clickIdOf, markedBy } from "./answer-click";
 
 export type HumanAnswerResult =
   | { ok: true; bead: Bead }
@@ -17,29 +17,30 @@ export interface HumanAnswerOptions {
   actor: string;
   /** SCOTTY_HUMAN_RESPOND=keep-open: respond and dismiss clear the label instead of closing. */
   keepOpen: boolean;
-  /** Where a kept review record or a failed close is reported (the route's console.error). */
+  /** Where a kept review record, a lost mark or a failed close is reported (the route's console.error). */
   log?: (line: string) => void;
 }
 
-/** The item's comments; `bd show` gives only their count, so they are read only when it has some. */
-async function commentsOf(s: SlotSteps, item: Bead): Promise<Comment[]> {
-  return item.comment_count === 0 ? [] : s.comments(item.id);
-}
+/** Is the item done: closed, or (keep-open) open without the `human` label? */
+const done = (item: Bead, keepOpen: boolean) => item.status === "closed" || (keepOpen && !item.labels.includes("human"));
 
 /**
  * Act on a "Needs You" (human-labelled) bead, in ONE slot of the board's bd
- * queue (agentwatch board age-6mk): read the item, write the comment, close,
- * read the item once for the response. No list export runs between the steps,
- * and no step reads the item again after the comment.
+ * queue (agentwatch board age-6mk): read the item, write the comment, mark the
+ * item with the click's id, close, read the item once for the response. No list
+ * export runs between the steps.
  *
- * An answer is written once. The page sends the click time (`answered_at`), and
- * a retry of the same answer keeps it. When the item's newest comment, from
- * anyone, is the actor's with this text and written after the click, an earlier
- * try saved it: only the close runs. When an earlier try also closed the item
- * (with this answer's reason, and the actor's newest comment is this text after
- * the click), the answer is a success with no write. Without a click time, the
- * answer is written. A close that fails after the answer is saved says so
- * (`answer_saved_close_failed`), and the retry only closes.
+ * An answer is written once per click (lib/answer-click.ts). The page sends the
+ * id of the click (`click_id`); a retry of the same click sends the same id.
+ *  - The item is done and carries this click's mark: an earlier try finished
+ *    it; a success with no write (never when a manager's answer waits for review).
+ *  - The item carries this click's mark but is still open: an earlier try saved
+ *    the comment; only the close runs.
+ *  - Otherwise the comment is written, then the mark, then the close.
+ * Without a click id (an older page) the answer is written as before, with no mark.
+ * Known limit: when the comment is written and the mark then fails, a retry
+ * writes the comment again (two bd calls cannot be one); the answer itself goes on.
+ * A close that fails after the answer is saved says so (`answer_saved_close_failed`).
  *
  * Matches `bd human` (upstream issue #88; fork-only until that lands):
  *  - respond → the comment answering the agent's question, then close with
@@ -54,24 +55,28 @@ async function commentsOf(s: SlotSteps, item: Bead): Promise<Comment[]> {
  */
 export async function answerHuman(store: BeadsStore, id: string, body: HumanBody, opts: HumanAnswerOptions): Promise<HumanAnswerResult> {
   const log = opts.log ?? ((line: string) => console.error(line));
-  const clickedAt = clickTime(body.answered_at);
+  const clickId = clickIdOf(body.click_id);
   return store.inOneSlot(async (s) => {
     const item = await s.get(id);
-    // An earlier try of this click closed the item with this answer: it is done.
-    if (item && item.status === "closed" && clickedAt !== null) {
-      const done = validateHumanAnswer(item, body, { closedOk: true });
-      if (done.ok && done.comment !== null && item.close_reason === done.reason
-          && actorWroteAfter(await commentsOf(s, item), done.comment, opts.actor, clickedAt)) {
-        return { ok: true, bead: item };
-      }
+    // This click already finished the item (its response was lost): done, no write.
+    if (item && markedBy(item.metadata, clickId) && done(item, opts.keepOpen) && item.metadata?.[REVIEW_KEY] !== "pending") {
+      return { ok: true, bead: item };
     }
     const verdict = validateHumanAnswer(item, body, { closedOk: false });
     if (!verdict.ok) return { ok: false, status: verdict.status, error: verdict.error, code: verdict.code };
     let saved = false;
     if (verdict.comment !== null && item) {
-      const retry = clickedAt !== null && savedByThisClick(await commentsOf(s, item), verdict.comment, opts.actor, clickedAt);
-      if (!retry) await s.addComment(id, verdict.comment, opts.actor);
+      // An earlier try of this click saved the comment (its mark is on the item): not again.
+      if (!markedBy(item.metadata, clickId)) await s.addComment(id, verdict.comment, opts.actor);
       saved = true;
+    }
+    if (clickId !== null && !markedBy(item?.metadata, clickId)) {
+      try {
+        await s.setMetadata(id, { [ANSWER_CLICK_KEY]: clickId }, opts.actor);
+      } catch (e) {
+        // The answer goes on without its mark (the known limit above).
+        log(`human: the click mark of ${id} was not written: ${errorTag(e)}`);
+      }
     }
     try {
       if (opts.keepOpen && verdict.reason !== "Declined") await s.removeLabel(id, "human", opts.actor);
