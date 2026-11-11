@@ -3,7 +3,7 @@ import * as React from "react";
 import { HumanQuestionnaire } from "@/components/human-questionnaire";
 import { useApp } from "@/components/app-context";
 import { Icon } from "@/components/icons";
-import { failedDraft, useAnswerOutbox, type AnswerRoute } from "@/components/answer-outbox";
+import { ClosedMeanwhile, failedDraft, useAnswerOutbox, type AnswerRoute } from "@/components/answer-outbox";
 import { HUMAN_KINDS, failureFor, type OutboxKind } from "@/lib/answer-outbox";
 import { api, humanBody } from "@/lib/api-client";
 import { parseQuestions, parseChoices, renderChoice, isMultiSelect, renderSelection, type HumanChoice } from "@/lib/human-choices";
@@ -47,7 +47,12 @@ function SingleHumanAnswer({ bead, route, disabled: held }: { bead: Bead; route?
   const send = (kind: OutboxKind, body: HumanBody) => void outbox.send({
     id: bead.id,
     kind: route?.kind ?? kind,
-    request: (signal) => (route ? route.request(body, signal) : api.human.answer(projectId, bead.id, body, signal)),
+    // The click time goes with the answer; a retry of the same answer keeps it, so the board writes it once.
+    request: (signal, clickedAt) => (route ? route.request(body, signal)
+      : api.human.answer(projectId, bead.id, { ...body, answered_at: new Date(clickedAt).toISOString() }, signal)),
+    fingerprint: JSON.stringify(body),
+    // A respond writes its text: a re-read checks it is the actor's newest comment.
+    comment: !route && kind === "respond" && body.action === "respond" ? body.text : null,
     draft: { text, selected } satisfies SingleDraft,
     warning: route?.warning,
   });
@@ -91,6 +96,7 @@ function SingleHumanAnswer({ bead, route, disabled: held }: { bead: Bead; route?
         className="mb-2 w-full resize-y rounded-[9px] border border-border bg-[var(--surface-2)] p-[9px_11px] text-[13px] leading-[1.5] text-[var(--text)] outline-none focus:border-[var(--brand)]" />
       <p className="mb-2 text-[12px] text-[var(--text-3)]">To decline the question, write your reason above and press Decline question.</p>
       {errorMessage && <p role="alert" className="mb-2 text-[12px] text-red-500">{errorMessage}</p>}
+      <ClosedMeanwhile bead={bead} failed={!!failed} route={route} />
       {multiSelect && note && selected.length > 0 && <p className="mb-2 text-[12px] text-[var(--text-3)]">Respond sends the selected options with your comment.</p>}
       {recommended && <p className="mb-2 text-[12px] text-[var(--text-3)]">Dismiss uses: {recommended.label}.{note ? " Your comment goes with it." : ""}</p>}
       <div className="flex flex-wrap items-center justify-end gap-2">

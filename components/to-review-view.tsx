@@ -14,7 +14,7 @@ import type { Bead } from "@/lib/schema";
 
 /** An Accept of the manager's answer, through the answer outbox: the row leaves at the click. */
 const acceptOf = (projectId: string, id: string): OutboxSend =>
-  ({ id, kind: "accept", request: (signal) => api.review.accept(projectId, id, signal) });
+  ({ id, kind: "accept", request: (signal) => api.review.accept(projectId, id, signal), fingerprint: "accept", comment: null });
 
 /** What the manager answered, as a person reads it. */
 function answerText(bead: Bead, text: string | undefined): string {

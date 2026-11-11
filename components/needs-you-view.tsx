@@ -3,6 +3,7 @@ import * as React from "react";
 import { GateApproval } from "@/components/gate-approval";
 import { useApp } from "@/components/app-context";
 import { useAnswerOutbox } from "@/components/answer-outbox";
+import { keepsFailedCard } from "@/lib/answer-outbox";
 import { HumanAnswer } from "@/components/human-answer";
 import { Icon, typeIconName } from "@/components/icons";
 import { OriginBadge } from "@/components/board/bead-card";
@@ -33,8 +34,12 @@ import type { Bead } from "@/lib/schema";
 export function NeedsYouView() {
   const { beads, index } = useApp();
   const outbox = useAnswerOutbox();
-  // An answered item leaves at the click; a failed write brings it back (age-6mk).
-  const inbox = React.useMemo(() => beads.filter((b) => needsHuman(b) && !outbox.hidden(b.id)), [beads, outbox]);
+  // An answered item leaves at the click; a failed write brings it back (age-6mk),
+  // also when someone else closed the item meanwhile: its card says so.
+  const inbox = React.useMemo(
+    () => beads.filter((b) => (needsHuman(b) || keepsFailedCard(outbox.entry(b.id))) && !outbox.hidden(b.id)),
+    [beads, outbox],
+  );
   const gates = React.useMemo(
     () => beads.filter((b) => readyHumanGate(b, index)),
     [beads, index],

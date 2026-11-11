@@ -4,9 +4,10 @@
 // SCOTTY_SLOW_BD_DIR=<a control folder>, and pass the same folder here: the test
 // makes the server's bd slow, or makes one write fail, through files in it.
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { promisify } from "node:util";
 import { chromium } from "playwright";
 import { parseChoice, parseNote, renderChoice } from "../lib/human-choices.ts";
 const base = process.env.SCOTTY_TEST_URL;
@@ -17,6 +18,8 @@ assert.ok(base && repo && control, "Set SCOTTY_TEST_URL, SCOTTY_CHOICES_REPO and
 const bin = process.env.SCOTTY_TEST_BD || "bd";
 const MANAGER = "manager:test/manager";
 const run = (actor, args) => execFileSync(bin, args, { cwd: repo, encoding: "utf8", env: { ...process.env, BEADS_ACTOR: actor } });
+// The same, without blocking the test process (inside a route handler, while the page is timed).
+const runAsync = (actor, args) => promisify(execFile)(bin, args, { cwd: repo, encoding: "utf8", env: { ...process.env, BEADS_ACTOR: actor } });
 const bd = (...args) => JSON.parse(run("agent:test", args));
 const show = (id) => bd("show", id, "--json")[0];
 const comments = (id) => bd("comments", id, "--json");
@@ -260,6 +263,62 @@ try {
     assert.equal(show(item).close_reason, "Responded");
     assert.equal(mine(item).length, 1);
     console.log("PASS answer speed: a lost response after the board wrote the answer reads as sent, with no error");
+  }
+
+  // ---- The request fails while a manager answers the item: never "sent" (re-check Important 1) ----
+  {
+    const typed = "Ship it on Monday.";
+    const item = create("Someone else answers?", null);
+    const panel = await visit(item);
+    await panel.getByRole("textbox", { name: "Write an answer" }).fill(typed);
+    await page.route(`**/beads/${item}/human`, async (route) => {
+      // The manager answers and closes the item; the operator's request never reaches the board.
+      await runAsync(MANAGER, ["comment", item, "Ship it on Friday."]);
+      await runAsync(MANAGER, ["close", item, "--reason", "Responded"]);
+      await new Promise((done) => setTimeout(done, 1000));
+      await route.abort("failed");
+    });
+    const ms = await leaves(panel, () => panel.getByRole("button", { name: "Respond", exact: true }).click());
+    assert.ok(ms < 1000, `the card left ${ms} ms after the click`);
+    await panelOf(item).getByRole("alert").waitFor();
+    assert.match(await panelOf(item).getByRole("alert").innerText(), /did not reach the board/);
+    assert.equal(await panelOf(item).getByRole("textbox", { name: "Write an answer" }).inputValue(), typed, "the typed text is back");
+    await page.locator(`[data-closed-meanwhile="${item}"]`).getByText("This question was closed meanwhile; your answer is not saved.").waitFor();
+    assert.equal(await toast(`Responded to ${item}`).count(), 0, "the manager's close never reads as the operator's answer");
+    await page.unroute(`**/beads/${item}/human`);
+    // A fresh list shows the item closed: the card stays until the operator dismisses it.
+    const listed = page.waitForResponse((r) => r.request().method() === "GET" && new URL(r.url()).pathname.endsWith(listPath));
+    await refetch();
+    await listed;
+    await painted();
+    assert.equal(await panelOf(item).count(), 1, "the failed card stays although the item is closed");
+    await page.locator(`[data-closed-meanwhile="${item}"]`).getByRole("button", { name: "OK", exact: true }).click();
+    await panelOf(item).waitFor({ state: "detached" });
+    assert.equal(mine(item).length, 0, "the operator's answer was not written");
+    console.log("PASS answer speed: a manager's close during a failed request is not the operator's answer; the card stays with its error and text");
+  }
+
+  // ---- The board's own bd is slower than the page's 30 s (re-check Minor 1, Minor 3) ----
+  {
+    const typed = "Ship it when it is ready.";
+    const item = create("A slow board?", null);
+    const panel = await visit(item);
+    await panel.getByRole("textbox", { name: "Write an answer" }).fill(typed);
+    slow("close", 45);
+    await leaves(panel, () => panel.getByRole("button", { name: "Respond", exact: true }).click());
+    // The page gives up after 30 s; the re-read waits behind the slow close and gives up too.
+    await panelOf(item).getByRole("alert").waitFor({ timeout: 60000 });
+    assert.equal(await panelOf(item).getByRole("alert").innerText(),
+      "The board did not answer within 30 s; your answer may still be saved: check the item before answering again.");
+    assert.equal(await panelOf(item).getByRole("textbox", { name: "Write an answer" }).inputValue(), typed);
+    // The board finishes the write: the next list shows the item closed, the page reads it
+    // again, finds this answer, and counts it as sent.
+    await toast(`Responded to ${item}`).waitFor({ timeout: 60000 });
+    await panelOf(item).waitFor({ state: "detached", timeout: 30000 });
+    fast("close");
+    assert.equal(show(item).close_reason, "Responded");
+    assert.equal(mine(item).length, 1);
+    console.log("PASS answer speed: a board slower than 30 s: the card comes back saying the answer may still be saved, then the late write reads as sent");
   }
 
   // ---- The detail drawer: the form gives way to "Sending your answer…" ----

@@ -1,7 +1,7 @@
 import type { HumanBody } from "@/lib/human-validate";
 import { renderChoice, renderGroup, type QuestionAnswer, type HumanChoice } from "@/lib/human-choices";
 import { basePath } from "./base-path";
-import type { Bead, CreateInput, UpdateInput, DepType } from "./schema";
+import type { Bead, Comment, CreateInput, UpdateInput, DepType } from "./schema";
 import type { UpdateStatus, UpdateResult, UpdateChannel, UpdateTarget } from "./update-types";
 
 export interface Meta {
@@ -196,6 +196,7 @@ export const api = {
   }),
   list: (projectId: string) => request<BeadsResponse>(`${base(projectId)}/beads`),
   get: (projectId: string, id: string, signal?: AbortSignal) => request<Bead>(`${base(projectId)}/beads/${enc(id)}`, { signal }),
+  comments: (projectId: string, id: string, signal?: AbortSignal) => request<Comment[]>(`${base(projectId)}/beads/${enc(id)}/comments`, { signal }),
   create: (projectId: string, input: CreateInput) =>
     request<Bead>(`${base(projectId)}/beads`, { method: "POST", body: JSON.stringify(input) }),
   update: (projectId: string, id: string, patch: UpdateInput) =>

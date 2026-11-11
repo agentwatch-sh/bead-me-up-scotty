@@ -11,10 +11,10 @@ const require = createRequire(import.meta.url);
 function load(name) {
   const exports = {};
   const code = ts.transpileModule(readFileSync(new URL(`../lib/${name}.ts`, import.meta.url), "utf8"), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
-  vm.runInNewContext(code, { exports, require: (id) => id.startsWith("./") ? load(id.slice(2)) : require(id), Error, Object, Date, Array, Set, Map, JSON }, { filename: name });
+  vm.runInNewContext(code, { exports, require: (id) => id.startsWith("./") ? load(id.slice(2)) : require(id), Error, Object, Date, Array, Set, Map, JSON, Number, String }, { filename: name });
   return exports;
 }
-const { isHidden, outboxAfter, patchAnswered, outboxText, outboxKey, listWithStart, failureFor, answerLanded, mayHaveLanded, failureText, ANSWER_TIMEOUT_MS } = load("answer-outbox");
+const { isHidden, outboxAfter, patchAnswered, outboxText, outboxKey, listWithStart, failureFor, answerLanded, mayHaveLanded, failureText, ANSWER_TIMEOUT_MS, clickFor, needsRecheck, keepsFailedCard } = load("answer-outbox");
 
 // The click: the item leaves at once, whatever list is on screen.
 let box = outboxAfter({}, { type: "send", id: "q-1", kind: "respond", draft: { text: "typed" } });
@@ -35,7 +35,7 @@ assert.equal(isHidden(box["q-1"], 1001), false, "a list requested after the 2xx 
 // A failure: the item is back with its error and the draft it was sent with.
 box = outboxAfter({}, { type: "send", id: "q-2", kind: "decline", draft: { text: "Wrong premise." } });
 box = outboxAfter(box, { type: "failed", id: "q-2", error: "close refused" });
-assert.deepEqual({ ...box["q-2"] }, { state: "failed", kind: "decline", draft: { text: "Wrong premise." }, error: "close refused" });
+assert.deepEqual({ ...box["q-2"] }, { state: "failed", kind: "decline", draft: { text: "Wrong premise." }, error: "close refused", uncertain: false });
 assert.equal(isHidden(box["q-2"], undefined), false);
 assert.equal(isHidden(box["q-2"], 0), false);
 // A new send replaces the failure; a cleared failure is gone.
@@ -130,7 +130,7 @@ console.log("PASS answer outbox: entries are kept per project");
 }
 console.log("PASS answer outbox: an error shows only in the form of its own kind");
 
-// ---- After a failure that may have been written, the item tells (review M1, I3) ----
+// ---- After a failure that may have been written, the item tells (review M1, I3; re-check Important 1) ----
 {
   const network = new TypeError("Failed to fetch");
   const timeout = Object.assign(new Error("signal timed out"), { name: "TimeoutError" });
@@ -143,21 +143,83 @@ console.log("PASS answer outbox: an error shows only in the form of its own kind
   for (const e of [refusal, login]) assert.equal(mayHaveLanded(e), false, `${e.message}: a refusal wrote nothing`);
   assert.match(failureText(network), /did not reach the board/);
   assert.match(failureText(aborted), /did not reach the board/);
-  assert.equal(failureText(timeout), `The board did not answer within ${ANSWER_TIMEOUT_MS / 1000} s. Try again.`);
+  // The page gives up before the board does: the answer may still be saved (re-check Minor 1).
+  assert.equal(failureText(timeout), `The board did not answer within ${ANSWER_TIMEOUT_MS / 1000} s; your answer may still be saved: check the item before answering again.`);
   assert.equal(failureText(server), "Your answer is saved; closing failed: try again.");
   assert.equal(failureText(refusal), refusal.message);
   assert.equal(ANSWER_TIMEOUT_MS, 30000);
-  const closed = (close_reason, metadata = {}) => ({ id: "q-1", status: "closed", close_reason, metadata });
-  assert.equal(answerLanded("respond", closed("Responded")), true);
-  assert.equal(answerLanded("answers", closed("Responded")), true);
-  assert.equal(answerLanded("dismiss", closed("Dismissed")), true);
-  assert.equal(answerLanded("decline", closed("Declined")), true);
-  assert.equal(answerLanded("respond", closed("Dismissed")), false, "another close is not this answer");
-  assert.equal(answerLanded("respond", { id: "q-1", status: "open" }), false);
-  assert.equal(answerLanded("accept", closed("Responded", { "board.review": "accepted" })), true);
-  assert.equal(answerLanded("accept", closed("Responded", { "board.review": "pending" })), false);
-  assert.equal(answerLanded("reverse", closed("Responded", { "board.review": "reversed" })), true);
-  assert.equal(answerLanded("reverse", closed("Responded", { "board.review": "pending" })), false);
-  assert.equal(answerLanded("respond", null), false);
 }
-console.log("PASS answer outbox: a failure that may have been written is checked against the item");
+console.log("PASS answer outbox: which failures are checked against the item, and their words");
+
+// ---- Landed: this click's answer, never someone else's close (re-check Important 1, Minor 2) ----
+{
+  const ACTOR = "human:me";
+  const CLICK = Date.parse("2026-11-10T12:00:00Z");
+  const t = (s) => new Date(CLICK + s * 1000).toISOString();
+  const sent = (comment) => ({ at: CLICK, comment, actor: ACTOR });
+  const closed = (close_reason, extra = {}) => ({ id: "q-1", status: "closed", close_reason, closed_at: t(1), labels: ["human"], metadata: {}, ...extra });
+  const mine = (text, s = 1) => [{ author: ACTOR, text, created_at: t(s) }];
+  // A comment answer: closed with its reason, and the actor's newest comment is the text after the click.
+  for (const kind of ["respond", "answers"]) {
+    assert.equal(answerLanded(kind, closed("Responded"), mine("Use blue."), sent("Use blue.")), true, kind);
+    assert.equal(answerLanded(kind, closed("Responded"), [{ author: "manager:box/m", text: "Ship on Friday.", created_at: t(1) }], sent("Use blue.")), false, `${kind}: a manager's answer closed it`);
+    assert.equal(answerLanded(kind, closed("Responded"), mine("Other words."), sent("Use blue.")), false, `${kind}: other words`);
+    assert.equal(answerLanded(kind, closed("Responded"), mine("Use blue.", -60), sent("Use blue.")), false, `${kind}: the same words from before the click`);
+    assert.equal(answerLanded(kind, closed("Responded"), [...mine("Use blue."), ...mine("Later.", 2)], sent("Use blue.")), false, `${kind}: a newer comment of the actor`);
+    assert.equal(answerLanded(kind, closed("Dismissed"), mine("Use blue."), sent("Use blue.")), false, `${kind}: closed as another reason`);
+    assert.equal(answerLanded(kind, { id: "q-1", status: "open", labels: ["human"] }, mine("Use blue."), sent("Use blue.")), false, `${kind}: still open`);
+    // Keep-open mode: open, the human label gone, and the actor's comment after the click.
+    assert.equal(answerLanded(kind, { id: "q-1", status: "open", labels: ["question"] }, mine("Use blue."), sent("Use blue.")), true, `${kind}: keep-open`);
+    assert.equal(answerLanded(kind, { id: "q-1", status: "open", labels: ["question"] }, mine("Other."), sent("Use blue.")), false, `${kind}: keep-open, other words`);
+  }
+  // A clock skew of a few seconds still counts.
+  assert.equal(answerLanded("respond", closed("Responded"), mine("Use blue.", -4), sent("Use blue.")), true, "within the allowed skew");
+  // Dismiss and Decline: closed with the reason, at or after the click, by the actor when the record says who.
+  for (const [kind, reason] of [["dismiss", "Dismissed"], ["decline", "Declined"]]) {
+    assert.equal(answerLanded(kind, closed(reason), [], sent(null)), true, kind);
+    assert.equal(answerLanded(kind, closed(reason, { closed_at: t(-60) }), [], sent(null)), false, `${kind}: closed before the click`);
+    assert.equal(answerLanded(kind, closed(reason, { closed_by: "manager:box/m" }), [], sent(null)), false, `${kind}: closed by another actor`);
+    assert.equal(answerLanded(kind, closed(reason, { closed_by: ACTOR }), [], sent(null)), true, `${kind}: closed by the actor`);
+    assert.equal(answerLanded(kind, closed("Responded"), [], sent(null)), false, `${kind}: another reason`);
+  }
+  // To Review: the record, at or after the click, by the actor.
+  const reviewed = (review, at, by = ACTOR) => closed("Responded", { metadata: { "board.review": review, "board.reviewed_at": at, "board.reviewed_by": by } });
+  assert.equal(answerLanded("accept", reviewed("accepted", t(1)), [], sent(null)), true);
+  assert.equal(answerLanded("accept", reviewed("accepted", t(-60)), [], sent(null)), false, "an older acceptance");
+  assert.equal(answerLanded("accept", reviewed("accepted", t(1), "human:other"), [], sent(null)), false, "another reviewer");
+  assert.equal(answerLanded("reverse", reviewed("reversed", t(1)), [], sent(null)), true);
+  assert.equal(answerLanded("reverse", reviewed("pending", t(1)), [], sent(null)), false);
+  assert.equal(answerLanded("respond", null, [], sent("x")), false);
+}
+console.log("PASS answer outbox: an answer counts as landed only when the item shows this click's answer");
+
+// ---- The click time: a retry of the same answer keeps it (re-check Important 2) ----
+{
+  assert.equal(clickFor(undefined, "a", 1000), 1000);
+  assert.equal(clickFor({ fingerprint: "a", at: 500 }, "a", 1000), 500, "the same answer again: its first click");
+  assert.equal(clickFor({ fingerprint: "a", at: 500 }, "b", 1000), 1000, "another answer: a new click");
+}
+console.log("PASS answer outbox: a retry of the same answer keeps its click time");
+
+// ---- A failure that may still be written, and the card of an item closed meanwhile (re-check Important 1, Minor 1) ----
+{
+  const key = "q-1";
+  let box = outboxAfter({}, { type: "send", id: key, kind: "respond", draft: { text: "x" } });
+  box = outboxAfter(box, { type: "failed", id: key, error: "timed out", uncertain: true });
+  assert.equal(box[key].uncertain, true);
+  // The board settles the item later: an uncertain failure is checked again, a certain one is not.
+  assert.equal(needsRecheck(box[key], { status: "closed", labels: ["human"] }), true);
+  assert.equal(needsRecheck(box[key], { status: "open", labels: ["question"] }), true, "keep-open: the label went");
+  assert.equal(needsRecheck(box[key], { status: "open", labels: ["human"] }), false, "still waiting");
+  assert.equal(needsRecheck({ ...box[key], uncertain: false }, { status: "closed", labels: ["human"] }), false);
+  // The check finds this click's answer: the failure becomes sent; else it is settled (certain).
+  assert.equal(outboxAfter(box, { type: "sent", id: key, at: 2000 })[key].state, "sent");
+  assert.equal(outboxAfter(box, { type: "settled", id: key })[key].uncertain, false);
+  assert.equal(outboxAfter(box, { type: "settled", id: key })[key].state, "failed");
+  // A failed answer keeps its card, also when the item left the inbox meanwhile (someone else closed it).
+  assert.equal(keepsFailedCard(box[key]), true);
+  assert.equal(keepsFailedCard({ state: "failed", kind: "accept", error: "e" }), false, "To Review keeps its own rows");
+  assert.equal(keepsFailedCard({ state: "sending", kind: "respond" }), false);
+  assert.equal(keepsFailedCard(undefined), false);
+}
+console.log("PASS answer outbox: an uncertain failure is checked again when the item settles; a failed answer keeps its card");

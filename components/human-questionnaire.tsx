@@ -1,7 +1,7 @@
 "use client";
 import * as React from "react";
 import { useApp } from "@/components/app-context";
-import { failedDraft, useAnswerOutbox, type AnswerRoute } from "@/components/answer-outbox";
+import { ClosedMeanwhile, failedDraft, useAnswerOutbox, type AnswerRoute } from "@/components/answer-outbox";
 import { api, humanBody } from "@/lib/api-client";
 import { HUMAN_KINDS, failureFor } from "@/lib/answer-outbox";
 import type { Bead } from "@/lib/schema";
@@ -34,7 +34,12 @@ export function HumanQuestionnaire({ bead, initialQuestions, route, disabled: he
     void outbox.send({
       id: bead.id,
       kind: route?.kind ?? (action === "dismiss" ? "dismiss" : "answers"),
-      request: (signal) => (route ? route.request(body, signal) : api.human.answer(projectId, bead.id, body, signal)),
+      // The click time goes with the answer; a retry of the same answer keeps it, so the board writes it once.
+      request: (signal, clickedAt) => (route ? route.request(body, signal)
+        : api.human.answer(projectId, bead.id, { ...body, answered_at: new Date(clickedAt).toISOString() }, signal)),
+      fingerprint: JSON.stringify(body),
+      // A respond writes the group's comment: a re-read checks it is the actor's newest.
+      comment: !route && action === "respond" ? body.text ?? null : null,
       draft: drafts,
       warning: route?.warning,
     });
@@ -108,6 +113,7 @@ export function HumanQuestionnaire({ bead, initialQuestions, route, disabled: he
         })}
       </div>
       {error && <p role="alert" className="mt-2 text-[12px] text-red-500">{error}</p>}
+      <ClosedMeanwhile bead={bead} failed={!!failed} route={route} />
       <p className="my-2 text-[12px] text-[var(--text-3)]">Dismiss uses the recommended choice for every question, with any comment you wrote.</p>
       <div className="flex flex-wrap justify-end gap-2">
         <button type="button" disabled={disabled} onClick={() => send("dismiss", recommendations)}
