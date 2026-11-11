@@ -171,7 +171,13 @@ console.log("PASS answer outbox: which failures are checked against the item, an
   const review = (value, metadata = {}) => item("closed", ["human"], { "board.review": value, ...metadata });
   for (const kind of ["accept", "reverse"]) {
     assert.equal(afterFailure(kind, review("pending"), sent), "failed", kind);
-    assert.equal(afterFailure(kind, review("pending", marked), sent), "saved", kind);
+    // The mark comes with the review record, so a pending record with the mark is a stale mark: failed.
+    assert.equal(afterFailure(kind, review("pending", marked), sent), "failed", `${kind}: pending, whatever the mark`);
+    // A Reverse that failed half-way (reverse_incomplete): open again, no review key: failed, not "closed now".
+    assert.equal(afterFailure(kind, item("open", ["human"], {}), sent), "failed", `${kind}: open again`);
+    assert.equal(needsRecheck({ state: "failed", kind, error: "e", uncertain: true }, item("open", ["human"], {})), false, `${kind}: open again is not settled`);
+    // Closed with no pending record: settled.
+    assert.equal(afterFailure(kind, item("closed", ["human"], {}), sent), "closed", `${kind}: closed, no record`);
     assert.equal(afterFailure(kind, review("accepted", marked), sent), "closed", `${kind}: the record is in place`);
     assert.equal(afterFailure(kind, review("reversed"), sent), "closed", `${kind}: someone else's record`);
   }
@@ -193,8 +199,8 @@ console.log("PASS answer outbox: after an uncertain failure, open+mark is saved,
   assert.equal(newClickId({ randomUUID: () => "from-random-uuid" }), "from-random-uuid");
   const viaValues = newClickId({ getRandomValues: (bytes) => { bytes.fill(171); return bytes; } });
   assert.match(viaValues, uuid);
-  assert.match(newClickId(undefined), uuid);
-  assert.notEqual(newClickId(undefined), newClickId(undefined));
+  assert.match(newClickId({}), uuid);
+  assert.notEqual(newClickId({}), newClickId({}));
 }
 console.log("PASS answer outbox: the click id; without randomUUID it comes from getRandomValues");
 

@@ -210,7 +210,10 @@ console.log("PASS human answer once: a retry of the same click on an open item o
 // The route never infers "this click closed it": the mark comes before the close, and another
 // writer can close in between. A retry on a closed or done item is stale, as every other answer.
 const closedAs = (reason, metadata = {}) => { reset(metadata); item = { ...item, status: "closed", close_reason: reason, closed_at: at() }; };
-const ANSWERS = [BODY, { action: "dismiss", text: "Fine." }, { action: "decline", text: "No." }, { action: "dismiss" }];
+// Every kind of answer, a tapped choice and a group too: the closed check comes before any shape check.
+const CHOICE = { action: "respond", choice: { version: 1, id: "blue", label: "Use blue", description: "Blue.", recommended: true }, text: "Use blue" };
+const GROUP = { action: "respond", answers: [{ id: "q1", question: "Theme?", header: "Theme", multiSelect: false, action: "responded", choices: null, text: "Blue." }], text: "Blue." };
+const ANSWERS = [BODY, { action: "dismiss", text: "Fine." }, { action: "decline", text: "No." }, { action: "dismiss" }, CHOICE, GROUP];
 for (const metadata of [{}, { "scotty.answer_click": CLICK }, { "scotty.answer_click": "click-z" }]) {
   for (const body of ANSWERS) {
     closedAs("Responded", metadata);
@@ -228,6 +231,13 @@ for (const metadata of [{}, { "scotty.answer_click": CLICK }]) {
     assert.equal((await answer(body, true)).code, "stale_question", `keep-open ${body.action}`);
     assert.deepEqual(calls().map((c) => c[0]), ["show"]);
   }
+}
+// A bare Dismiss on an item that is not waiting (no human label, or deferred): stale, no mark, no close.
+for (const change of [{ labels: ["question"] }, { status: "deferred" }]) {
+  reset();
+  item = { ...item, ...change };
+  assert.equal((await answer({ action: "dismiss" })).code, "stale_question", JSON.stringify(change));
+  assert.deepEqual(calls().map((c) => c[0]), ["show"]);
 }
 // A manager's answer that waits for review points to To Review.
 closedAs("Responded", { "scotty.answer_click": CLICK, "board.review": "pending" });

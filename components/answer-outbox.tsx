@@ -142,6 +142,8 @@ export function AnswerOutboxProvider({ projectId, listStartedAt, children }: {
             message = CLOSED_NOW_TEXT;
             uncertain = false;
             closedNow = true;
+            // Closed now: its try goes too, so a later answer on a reopened item is a new click.
+            attempts.current.delete(key);
           }
         }
       }
@@ -169,7 +171,11 @@ export function AnswerOutboxProvider({ projectId, listStartedAt, children }: {
       void reread(attempt.item).then((found) => {
         if (!found || !recheckStillCurrent(attempts.current.get(key), attempt, boxNow.current[key])) return;
         patch(found);
-        if (afterFailure(attempt.item.kind, found, attempt.sent) === "closed") apply({ type: "closedNow", id: key });
+        if (afterFailure(attempt.item.kind, found, attempt.sent) === "closed") {
+          // Closed now: its try goes too, so a later answer on a reopened item is a new click.
+          attempts.current.delete(key);
+          apply({ type: "closedNow", id: key });
+        }
       }).finally(() => rechecking.current.delete(key));
     }
   }, [apply, beads, box, patch, projectId, reread]);
@@ -187,7 +193,13 @@ export function AnswerOutboxProvider({ projectId, listStartedAt, children }: {
       }
       return true;
     },
-    clear: (id) => apply({ type: "clear", id: outboxKey(projectId, id) }),
+    clear: (id) => {
+      const key = outboxKey(projectId, id);
+      // A card closed now goes with its try: a later answer on a reopened item is a new click.
+      const was = box[key];
+      if (was?.state === "failed" && was.closedNow) attempts.current.delete(key);
+      apply({ type: "clear", id: key });
+    },
   }), [apply, box, listStartedAt, projectId, run]);
 
   return <OutboxContext.Provider value={api_}>{children}</OutboxContext.Provider>;

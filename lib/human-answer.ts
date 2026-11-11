@@ -41,7 +41,8 @@ const done = (item: Bead, keepOpen: boolean) => item.status === "closed" || (kee
  * Without a click id (an older page) the answer is written as before, with no mark.
  * Known limit: when the comment is written and the mark then fails, a retry
  * writes the comment again (two bd calls cannot be one); without its mark the item
- * is not closed, and the route answers answer_saved_close_failed.
+ * is not closed, and for an answer with a comment the route answers
+ * answer_saved_close_failed (a bare Dismiss answers bd's own error).
  * A close that fails after the answer is saved says so (`answer_saved_close_failed`).
  *
  * Matches `bd human` (upstream issue #88; fork-only until that lands):
@@ -60,14 +61,19 @@ export async function answerHuman(store: BeadsStore, id: string, body: HumanBody
   const clickId = clickIdOf(body.click_id);
   return store.inOneSlot(async (s) => {
     const item = await s.get(id);
-    const verdict = validateHumanAnswer(item, body, { closedOk: false });
-    if (!verdict.ok) return { ok: false, status: verdict.status, error: verdict.error, code: verdict.code };
-    // A closed or done item takes no answer, a bare Dismiss too (it writes no comment, so the
-    // rules above let it pass): no mark, no close. Also a retry of this click: the mark comes
-    // before the close, so a mark on a closed item does not say who closed it (re-check rv-6mk-d).
-    if (!item || done(item, opts.keepOpen)) {
+    // An item that is not waiting takes no answer, before any check of the answer's shape
+    // (a retry of a choice or a group gets stale_question, not "the choices changed"):
+    // closed, deferred, without the human label, or done (keep-open). A bare Dismiss too,
+    // with no mark and no close. Also a retry of this click: the mark comes before the
+    // close, so a mark on a closed item does not say who closed it (re-check rv-6mk-d).
+    // A manager's answer that waits for review still points to To Review.
+    if (!item || item.status === "closed" || item.status === "deferred" || !item.labels.includes("human") || done(item, opts.keepOpen)) {
+      const managed = validateHumanAnswer(item, body, { closedOk: false });
+      if (!managed.ok && managed.code === "manager_answered") return { ok: false, status: managed.status, error: managed.error, code: managed.code };
       return { ok: false, status: 409, error: "This question is no longer waiting for an answer.", code: "stale_question" };
     }
+    const verdict = validateHumanAnswer(item, body, { closedOk: false });
+    if (!verdict.ok) return { ok: false, status: verdict.status, error: verdict.error, code: verdict.code };
     let saved = false;
     if (verdict.comment !== null) {
       // An earlier try of this click saved the comment (its mark is on the open item): not again.

@@ -270,6 +270,33 @@ try {
     console.log("PASS answer speed: a lost response on an item now closed gives the neutral words and the typed text, never \"sent\"");
   }
 
+  // ---- The same item reopened and answered again with the same words: a new click, written (re-check rv-6mk-e, Minor 7) ----
+  {
+    const typed = "Ship it.";
+    const item = create("Reopened and asked again?", null);
+    const panel = await visit(item);
+    await panel.getByRole("textbox", { name: "Write an answer" }).fill(typed);
+    await page.route(`**/beads/${item}/human`, async (route) => {
+      await route.fetch();
+      await route.abort("failed");
+    });
+    await leaves(panel, () => panel.getByRole("button", { name: "Respond", exact: true }).click());
+    await panelOf(item).getByRole("alert").filter({ hasText: CLOSED_NOW }).waitFor();
+    await page.unroute(`**/beads/${item}/human`);
+    await page.locator(`[data-closed-meanwhile="${item}"]`).getByRole("button", { name: "OK", exact: true }).click();
+    await panelOf(item).waitFor({ state: "detached" });
+    // The agent reopens the item and asks again; the page (not reloaded) shows it, and the
+    // operator gives the same words: the board writes them, as a new answer.
+    run("agent:test", ["reopen", item]);
+    run("agent:test", ["update", item, "--set-metadata", "asked=again"]); // its write sends the page a change event
+    await panelOf(item).getByRole("textbox", { name: "Write an answer" }).waitFor({ timeout: 30000 });
+    await panelOf(item).getByRole("textbox", { name: "Write an answer" }).fill(typed);
+    await panelOf(item).getByRole("button", { name: "Respond", exact: true }).click();
+    await toast(`Responded to ${item}`).waitFor();
+    assert.equal(mine(item).length, 2, "the second answer is written: its click is new");
+    console.log("PASS answer speed: after a closed-now card, the same words on the reopened item are a new click and are written");
+  }
+
   // ---- The request fails while a manager answers the item: never "sent" (re-check Important 1) ----
   {
     const typed = "Ship it on Monday.";
@@ -475,6 +502,49 @@ try {
     await toast(`Reversed the answer to ${reversed}`).waitFor({ timeout: 30000 });
     fast("close");
     assert.equal(show(reversed).metadata["board.review"], "reversed");
+
+    // A Reverse that fails half-way (reverse_incomplete): the item is open again, waiting in Needs You.
+    // The page shows the route's own words, never "closed now" (re-check rv-6mk-e, Important 1).
+    const halfway = managerAnswered("Reverse, but it stops half-way?");
+    r = await openReview(halfway);
+    await r.getByRole("button", { name: "Reverse", exact: true }).click();
+    refuse("close", halfway); // reopen and comment work; the close fails; the review keys go
+    await r.locator(`[data-human-answer="${halfway}"]`).getByRole("button", { name: /^Use green/ }).click();
+    await toast("The reverse did not finish: the question is open again. Answer it in Needs You.").waitFor();
+    assert.equal(await page.getByText(CLOSED_NOW).count(), 0, "an item open again is never \"closed now\"");
+    allow("close", halfway);
+    assert.equal(show(halfway).status, "open");
+    assert.equal(show(halfway).metadata?.["board.review"], undefined);
+
+    // An Accept and a Reverse whose responses are lost: the row stays with the neutral words, its
+    // actions disabled, the typed Reverse answer back; OK removes it (re-check rv-6mk-e, Minor 6).
+    for (const action of ["accept", "reverse"]) {
+      const lost = managerAnswered(`Lost ${action}?`);
+      r = await openReview(lost);
+      await page.route(`**/beads/${lost}/review`, async (route) => {
+        await route.fetch();
+        await route.abort("failed");
+      });
+      if (action === "accept") {
+        await r.getByRole("button", { name: "Accept", exact: true }).click();
+      } else {
+        await r.getByRole("button", { name: "Reverse", exact: true }).click();
+        await r.getByRole("textbox", { name: "Write an answer" }).fill("Use green, and log it.");
+        await r.getByRole("button", { name: /^Use green/ }).click();
+      }
+      await row(lost).getByRole("alert").filter({ hasText: CLOSED_NOW }).waitFor();
+      // The actions are disabled: Accept on the row, or the Reverse panel's own answer buttons.
+      const action_ = action === "accept" ? row(lost).getByRole("button", { name: "Accept", exact: true }) : row(lost).getByRole("button", { name: /^Use green/ });
+      assert.equal(await action_.isDisabled(), true, `${action}: its actions are disabled`);
+      if (action === "reverse") {
+        assert.equal(await row(lost).getByRole("textbox", { name: "Write an answer" }).inputValue(), "Use green, and log it.", "the typed Reverse text is back");
+      }
+      assert.equal(await toast(action === "accept" ? `Accepted the answer to ${lost}` : `Reversed the answer to ${lost}`).count(), 0, "never \"sent\" after a failure");
+      await page.unroute(`**/beads/${lost}/review`);
+      await row(lost).locator(`[data-closed-meanwhile="${lost}"]`).getByRole("button", { name: "OK", exact: true }).click();
+      await row(lost).waitFor({ state: "detached" });
+      assert.equal(show(lost).metadata["board.review"], action === "accept" ? "accepted" : "reversed");
+    }
     console.log("PASS answer speed: Accept and Reverse leave at the click; a failed Accept comes back with its error");
   }
 

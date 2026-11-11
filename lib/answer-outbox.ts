@@ -196,6 +196,8 @@ export interface SentAnswer {
  */
 export function afterFailure(kind: OutboxKind, bead: Partial<Bead>, sent: SentAnswer): "saved" | "failed" | "closed" {
   if (settledOnBoard(kind, bead)) return "closed";
+  // A review writes its mark with its record, so for Accept and Reverse a mark never means "saved".
+  if (kind === "accept" || kind === "reverse") return "failed";
   return markedBy(bead.metadata, sent.clickId) ? "saved" : "failed";
 }
 
@@ -222,7 +224,9 @@ export function clickIdFor(previous: { fingerprint: string; clickId: string } | 
 
 /** Is the item no longer waiting for this kind of answer on the board? */
 export const settledOnBoard = (kind: OutboxKind, bead: Partial<Bead>) => (kind === "accept" || kind === "reverse"
-  ? bead.metadata?.["board.review"] !== "pending"
+  // A review is settled by its record (accepted, reversed), or by a close with no pending record; an
+  // item open again (a Reverse that failed half-way: no review key, the human label) is not.
+  ? ["accepted", "reversed"].includes(String(bead.metadata?.["board.review"])) || (bead.status === "closed" && bead.metadata?.["board.review"] !== "pending")
   : bead.status === "closed" || !(bead.labels ?? []).includes("human"));
 
 /** An uncertain failure whose item the board has settled since: read it again, to tell whether this answer landed. */
