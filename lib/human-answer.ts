@@ -32,14 +32,16 @@ const done = (item: Bead, keepOpen: boolean) => item.status === "closed" || (kee
  *
  * An answer is written once per click (lib/answer-click.ts). The page sends the
  * id of the click (`click_id`); a retry of the same click sends the same id.
- *  - The item is done and carries this click's mark: an earlier try finished
- *    it; a success with no write (never when a manager's answer waits for review).
- *  - The item carries this click's mark but is still open: an earlier try saved
- *    the comment; only the close runs.
+ *  - The open item carries this click's mark: an earlier try saved the comment;
+ *    only the close runs.
  *  - Otherwise the comment is written, then the mark, then the close.
+ *  - A closed or done item takes no answer (stale_question), also with this
+ *    click's mark: the mark comes before the close, so it does not say who closed
+ *    the item (re-check rv-6mk-d). The page says so; it never infers "sent".
  * Without a click id (an older page) the answer is written as before, with no mark.
  * Known limit: when the comment is written and the mark then fails, a retry
- * writes the comment again (two bd calls cannot be one); the answer itself goes on.
+ * writes the comment again (two bd calls cannot be one); without its mark the item
+ * is not closed, and the route answers answer_saved_close_failed.
  * A close that fails after the answer is saved says so (`answer_saved_close_failed`).
  *
  * Matches `bd human` (upstream issue #88; fork-only until that lands):
@@ -58,24 +60,29 @@ export async function answerHuman(store: BeadsStore, id: string, body: HumanBody
   const clickId = clickIdOf(body.click_id);
   return store.inOneSlot(async (s) => {
     const item = await s.get(id);
-    // This click already finished the item (its response was lost): done, no write.
-    if (item && markedBy(item.metadata, clickId) && done(item, opts.keepOpen) && item.metadata?.[REVIEW_KEY] !== "pending") {
-      return { ok: true, bead: item };
-    }
     const verdict = validateHumanAnswer(item, body, { closedOk: false });
     if (!verdict.ok) return { ok: false, status: verdict.status, error: verdict.error, code: verdict.code };
+    // A closed or done item takes no answer, a bare Dismiss too (it writes no comment, so the
+    // rules above let it pass): no mark, no close. Also a retry of this click: the mark comes
+    // before the close, so a mark on a closed item does not say who closed it (re-check rv-6mk-d).
+    if (!item || done(item, opts.keepOpen)) {
+      return { ok: false, status: 409, error: "This question is no longer waiting for an answer.", code: "stale_question" };
+    }
     let saved = false;
-    if (verdict.comment !== null && item) {
-      // An earlier try of this click saved the comment (its mark is on the item): not again.
+    if (verdict.comment !== null) {
+      // An earlier try of this click saved the comment (its mark is on the open item): not again.
       if (!markedBy(item.metadata, clickId)) await s.addComment(id, verdict.comment, opts.actor);
       saved = true;
     }
-    if (clickId !== null && !markedBy(item?.metadata, clickId)) {
+    if (clickId !== null && !markedBy(item.metadata, clickId)) {
       try {
         await s.setMetadata(id, { [ANSWER_CLICK_KEY]: clickId }, opts.actor);
       } catch (e) {
-        // The answer goes on without its mark (the known limit above).
-        log(`human: the click mark of ${id} was not written: ${errorTag(e)}`);
+        // No close without the mark: the item stays open and the page says the answer is
+        // saved; a retry then writes the comment again (the known limit above).
+        if (!saved) throw e;
+        log(`human: the click mark of ${id} was not written, so it is not closed: ${errorTag(e)}`);
+        return { ok: false, status: 500, error: SAVED_CLOSE_FAILED_TEXT, code: ANSWER_SAVED_CLOSE_FAILED };
       }
     }
     try {

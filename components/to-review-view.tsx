@@ -5,7 +5,7 @@ import { useAnswerOutbox, type AnswerRoute, type OutboxSend } from "@/components
 import { HumanAnswer } from "@/components/human-answer";
 import { Icon } from "@/components/icons";
 import { api } from "@/lib/api-client";
-import { failureFor } from "@/lib/answer-outbox";
+import { failureFor, keepsFailedCard } from "@/lib/answer-outbox";
 import { relTime, fmtDateTime } from "@/lib/beads-view";
 import { parseChoice, parseChoices, parseDecline, parseGroup, parseQuestions, parseSelection } from "@/lib/human-choices";
 import { managerAnswer, needsReview, REVIEW_REASON_KEY } from "@/lib/review";
@@ -60,7 +60,7 @@ export function ToReviewView() {
   const actor = meta?.humanActor ?? "you";
   // A row leaves at the click of Accept or Reverse; a failed write brings it back (age-6mk).
   const rows = React.useMemo(
-    () => beads.filter((b) => needsReview(b, actor) && !outbox.hidden(b.id))
+    () => beads.filter((b) => (needsReview(b, actor) || keepsFailedCard(outbox.entry(b.id))) && !outbox.hidden(b.id))
       .sort((a, b) => Date.parse(b.closed_at ?? "") - Date.parse(a.closed_at ?? "") || 0),
     [beads, actor, outbox],
   );
@@ -149,7 +149,9 @@ function ReviewRow({ bead, actor, disabled: bulkBusy, onHold }: { bead: Bead; ac
   const reason = bead.metadata?.[REVIEW_REASON_KEY];
   const questions = parseQuestions(bead.metadata?.["scotty.choices"]);
   const options = questions ? null : parseChoices(bead.metadata?.["scotty.choices"]);
-  const disabled = readOnly || bulkBusy || sending || comment.isPending;
+  // The review is in place now (by anyone): the row says so in neutral words; OK removes it.
+  const closedNow = entry?.state === "failed" && !!entry.closedNow;
+  const disabled = readOnly || bulkBusy || sending || comment.isPending || closedNow;
   // An error shows for its own action only: an Accept's here, a Reverse's in its form.
   const acceptError = failureFor(entry, ["accept"])?.error ?? null;
   const commentError = comment.error instanceof Error ? comment.error.message : null;
@@ -220,6 +222,13 @@ function ReviewRow({ bead, actor, disabled: bulkBusy, onHold }: { bead: Bead; ac
         )}
       </dl>
       {acceptError && <p role="alert" className="mb-2 text-[12px] text-red-500">{acceptError}</p>}
+      {closedNow && (
+        <div data-closed-meanwhile={bead.id} className="mb-2 flex flex-wrap items-center gap-2 text-[12px] text-[var(--text-2)]">
+          {!acceptError && !reversing && <span role="alert">{entry.error}</span>}
+          <button type="button" onClick={() => outbox.clear(bead.id)}
+            className="h-7 rounded-lg border border-border bg-[var(--surface-2)] px-3 text-[12px] font-[550] hover:bg-[var(--surface-3)]">OK</button>
+        </div>
+      )}
       {reversing ? (
         <div className="rounded-lg border border-border p-3">
           <p className="mb-3 text-[12px] text-[var(--text-2)]">Your answer replaces the manager&apos;s. The asking agent gets it as a new answer from you.</p>

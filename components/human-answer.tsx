@@ -39,7 +39,7 @@ function SingleHumanAnswer({ bead, route, disabled: held }: { bead: Bead; route?
   const multiSelect = isMultiSelect(bead.metadata?.["scotty.choices"]);
   const recommended: HumanChoice | undefined = options ? { version: 1, ...options[0] } : undefined;
   // With a route the item is closed on purpose (a Reverse answers a closed item).
-  const disabled = readOnly || !!held || entry?.state === "sending" || (!route && bead.status === "closed");
+  const disabled = readOnly || !!held || entry?.state === "sending" || (!route && bead.status === "closed") || !!failed?.closedNow;
   const errorMessage = failed?.error ?? null;
   // What the person typed goes with every answer: a tapped option, the selections, Dismiss.
   const note = text.trim() || undefined;
@@ -94,7 +94,7 @@ function SingleHumanAnswer({ bead, route, disabled: held }: { bead: Bead; route?
         className="mb-2 w-full resize-y rounded-[9px] border border-border bg-[var(--surface-2)] p-[9px_11px] text-[13px] leading-[1.5] text-[var(--text)] outline-none focus:border-[var(--brand)]" />
       <p className="mb-2 text-[12px] text-[var(--text-3)]">To decline the question, write your reason above and press Decline question.</p>
       {errorMessage && <p role="alert" className="mb-2 text-[12px] text-red-500">{errorMessage}</p>}
-      <ClosedMeanwhile bead={bead} failed={!!failed} route={route} />
+      <ClosedMeanwhile bead={bead} failed={failed} route={route} />
       {multiSelect && note && selected.length > 0 && <p className="mb-2 text-[12px] text-[var(--text-3)]">Respond sends the selected options with your comment.</p>}
       {recommended && <p className="mb-2 text-[12px] text-[var(--text-3)]">Dismiss uses: {recommended.label}.{note ? " Your comment goes with it." : ""}</p>}
       <div className="flex flex-wrap items-center justify-end gap-2">

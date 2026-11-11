@@ -10,8 +10,9 @@ import { api, type BeadsResponse } from "@/lib/api-client";
 import type { HumanBody } from "@/lib/human-validate";
 import type { Bead } from "@/lib/schema";
 import {
-  ANSWER_TIMEOUT_MS, answerLanded, clickIdFor, failureText, isHidden, mayHaveLanded, needsRecheck, outboxAfter, outboxKey, outboxText,
-  patchAnswered, recheckStillCurrent, settledOnBoard, type Outbox, type OutboxEntry, type OutboxEvent, type OutboxKind, type SentAnswer,
+  ANSWER_TIMEOUT_MS, CLOSED_NOW_TEXT, SAVED_TEXT, afterFailure, clickIdFor, failureText, isHidden, mayHaveLanded, needsRecheck, newClickId,
+  outboxAfter, outboxKey, outboxText,
+  patchAnswered, recheckStillCurrent, type Outbox, type OutboxEntry, type OutboxEvent, type OutboxKind, type SentAnswer,
 } from "@/lib/answer-outbox";
 
 /** Where an answer goes instead of the human route (To Review sends a Reverse). */
@@ -110,36 +111,44 @@ export function AnswerOutboxProvider({ projectId, listStartedAt, children }: {
     const key = outboxKey(projectId, item.id);
     const toastId = `outbox-${key}`;
     if (!queued) apply({ type: "send", id: key, kind: item.kind, draft: item.draft });
-    const previous = attempts.current.get(key);
-    const clickId = clickIdFor(previous && { fingerprint: previous.item.fingerprint, clickId: previous.sent.clickId },
-      item.fingerprint, () => crypto.randomUUID());
-    const attempt: Attempt = { item, sent: { clickId } };
-    attempts.current.set(key, attempt);
     toast.loading(outboxText(item.kind, item.id).sending, { id: toastId });
+    let attempt: Attempt | undefined;
     try {
+      // The click's id, made inside the try: nothing before the request can leave the
+      // item hidden for good (newClickId works without crypto.randomUUID too).
+      const previous = attempts.current.get(key);
+      const clickId = clickIdFor(previous && { fingerprint: previous.item.fingerprint, clickId: previous.sent.clickId },
+        item.fingerprint, () => newClickId());
+      attempt = { item, sent: { clickId } };
+      attempts.current.set(key, attempt);
       // A request that hangs counts as a failure after the time limit: the item comes back.
       confirm(key, item, await item.request(AbortSignal.timeout(ANSWER_TIMEOUT_MS), clickId));
       return true;
     } catch (e) {
       // No answer came, or the board failed on its side: the write may have happened.
-      // The item tells: only THIS click's mark counts, never someone else's close.
+      // The item, read again, decides one of three cases; it never makes the answer "sent".
+      let message = failureText(e);
       let uncertain = false;
-      if (mayHaveLanded(e)) {
+      let closedNow = false;
+      if (attempt && mayHaveLanded(e)) {
+        uncertain = true;
         const found = await reread(item);
-        if (found && answerLanded(item.kind, found, attempt.sent)) {
-          confirm(key, item, found);
-          return true;
+        if (found) {
+          // The list shows the item as the board has it now: a closed item's form is disabled at once.
+          patch(found);
+          const outcome = afterFailure(item.kind, found, attempt.sent);
+          if (outcome === "saved") message = SAVED_TEXT;
+          if (outcome === "closed") {
+            message = CLOSED_NOW_TEXT;
+            uncertain = false;
+            closedNow = true;
+          }
         }
-        // The list shows the item as the board has it now: a closed item's form is disabled at once.
-        if (found) patch(found);
-        // Still uncertain unless the board has settled the item without this answer.
-        uncertain = !found || !settledOnBoard(item.kind, found);
       }
-      const message = failureText(e);
-      apply({ type: "failed", id: key, error: message, uncertain });
+      apply({ type: "failed", id: key, error: message, uncertain, closedNow });
       toast.dismiss(toastId);
       // The board's own error goes as it is (toastError knows some codes); a dropped
-      // connection or the time limit gets its plain words.
+      // connection, the time limit and the three cases get their plain words.
       toastError(e instanceof Error && e.message === message ? e : new Error(message));
       return false;
     } finally {
@@ -148,9 +157,9 @@ export function AnswerOutboxProvider({ projectId, listStartedAt, children }: {
   }, [apply, confirm, patch, projectId, qc, reread]);
 
   // An uncertain failure (the page gave up, the board may still write): when the
-  // board settles the item, read it again. This click's answer landed: it is sent
-  // after all. Else the failure is certain (someone else closed it, say). A check
-  // acts only when its try is still the latest and the item still failed and uncertain.
+  // board settles the item, the card takes the neutral words (closed now, by
+  // anyone); it never becomes "sent". A check acts only when its try is still the
+  // item's latest and the item still failed and uncertain.
   React.useEffect(() => {
     for (const bead of beads) {
       const key = outboxKey(projectId, bead.id);
@@ -159,11 +168,11 @@ export function AnswerOutboxProvider({ projectId, listStartedAt, children }: {
       rechecking.current.add(key);
       void reread(attempt.item).then((found) => {
         if (!found || !recheckStillCurrent(attempts.current.get(key), attempt, boxNow.current[key])) return;
-        if (answerLanded(attempt.item.kind, found, attempt.sent)) confirm(key, attempt.item, found);
-        else apply({ type: "settled", id: key });
+        patch(found);
+        if (afterFailure(attempt.item.kind, found, attempt.sent) === "closed") apply({ type: "closedNow", id: key });
       }).finally(() => rechecking.current.delete(key));
     }
-  }, [apply, beads, box, confirm, projectId, reread]);
+  }, [apply, beads, box, patch, projectId, reread]);
 
   const api_ = React.useMemo<OutboxApi>(() => ({
     hidden: (id) => isHidden(box[outboxKey(projectId, id)], listStartedAt),
@@ -196,15 +205,15 @@ export function failedDraft<T>(entry: OutboxEntry | undefined, valid: (draft: un
 }
 
 /**
- * A failed answer whose item someone else closed meanwhile: the card stays with
- * its error and what was typed, says the answer is not saved, and leaves on OK.
+ * A failed answer whose item is closed or done now (by anyone): the card stays
+ * with the neutral words (its error) and what was typed; OK removes it.
  */
-export function ClosedMeanwhile({ bead, failed, route }: { bead: Bead; failed: boolean; route?: AnswerRoute }) {
+export function ClosedMeanwhile({ bead, failed, route }: { bead: Bead; failed: OutboxEntry | undefined; route?: AnswerRoute }) {
   const outbox = useAnswerOutbox();
-  if (route || !failed || needsHuman(bead)) return null;
+  // Closed now (the neutral case), or refused after the item left the inbox: OK removes the card.
+  if (route || failed?.state !== "failed" || (!failed.closedNow && needsHuman(bead))) return null;
   return (
     <div data-closed-meanwhile={bead.id} className="mb-2 flex flex-wrap items-center gap-2 text-[12px] text-[var(--text-2)]">
-      <span>This question was closed meanwhile; your answer is not saved.</span>
       <button type="button" onClick={() => outbox.clear(bead.id)}
         className="h-7 rounded-lg border border-border bg-[var(--surface-2)] px-3 text-[12px] font-[550] hover:bg-[var(--surface-3)]">OK</button>
     </div>

@@ -22,25 +22,30 @@ export type OutboxEntry =
   | { state: "sent"; kind: OutboxKind; at: number }
   /**
    * The write failed: the item is back with `error`, and the form with `draft`.
-   * `uncertain`: no answer came, or the board failed on its side, and the item did
-   * not yet show this answer; it may still land, so it is checked again when the
-   * board settles the item (`needsRecheck`).
+   * `uncertain`: no answer came, or the board failed on its side, and the item was
+   * still open; the board may still write, so the item is checked again when the
+   * board settles it (`needsRecheck`). `closedNow`: the item is closed or done now
+   * (by anyone): the card says so in neutral words, and OK removes it.
    */
-  | { state: "failed"; kind: OutboxKind; error: string; draft?: unknown; uncertain?: boolean };
+  | { state: "failed"; kind: OutboxKind; error: string; draft?: unknown; uncertain?: boolean; closedNow?: boolean };
 
 export type Outbox = Readonly<Record<string, OutboxEntry>>;
 
 export type OutboxEvent =
   | { type: "send"; id: string; kind: OutboxKind; draft?: unknown }
-  /** The board took it: after the 2xx, or a later check of an uncertain failure. */
+  /** The board took it: its 2xx. Nothing else makes an answer "sent". */
   | { type: "sent"; id: string; at: number }
-  | { type: "failed"; id: string; error: string; uncertain?: boolean }
-  /** An uncertain failure was checked again, and the item does not hold this answer. */
-  | { type: "settled"; id: string }
+  | { type: "failed"; id: string; error: string; uncertain?: boolean; closedNow?: boolean }
+  /** An uncertain failure's item is closed or done now: the neutral case (re-check rv-6mk-d). */
+  | { type: "closedNow"; id: string }
   /** A queued item that was never sent comes back as it was (Accept all stopped). */
   | { type: "release"; id: string }
   /** The operator dealt with a failure: its error goes. */
   | { type: "clear"; id: string };
+
+/** The words of the three cases after an uncertain failure (`afterFailure`). */
+export const SAVED_TEXT = "Your answer is saved; closing failed: try again.";
+export const CLOSED_NOW_TEXT = "This question is closed now. Your answer may or may not be the one recorded: open the item to check.";
 
 /** The outbox after `event`; the given outbox is never changed. */
 export function outboxAfter(box: Outbox, event: OutboxEvent): Outbox {
@@ -54,15 +59,15 @@ export function outboxAfter(box: Outbox, event: OutboxEvent): Outbox {
     case "send":
       return { ...box, [event.id]: { state: "sending", kind: event.kind, draft: event.draft } };
     case "sent":
-      return entry?.state === "sending" || (entry?.state === "failed" && entry.uncertain)
-        ? { ...box, [event.id]: { state: "sent", kind: entry.kind, at: event.at } }
-        : box;
+      return entry?.state === "sending" ? { ...box, [event.id]: { state: "sent", kind: entry.kind, at: event.at } } : box;
     case "failed":
       return entry?.state === "sending"
-        ? { ...box, [event.id]: { state: "failed", kind: entry.kind, draft: entry.draft, error: event.error, uncertain: !!event.uncertain } }
+        ? { ...box, [event.id]: { state: "failed", kind: entry.kind, draft: entry.draft, error: event.error, uncertain: !!event.uncertain, closedNow: !!event.closedNow } }
         : box;
-    case "settled":
-      return entry?.state === "failed" && entry.uncertain ? { ...box, [event.id]: { ...entry, uncertain: false } } : box;
+    case "closedNow":
+      return entry?.state === "failed" && entry.uncertain
+        ? { ...box, [event.id]: { ...entry, uncertain: false, closedNow: true, error: CLOSED_NOW_TEXT } }
+        : box;
     case "release":
       return entry?.state === "sending" ? without() : box;
     case "clear":
@@ -178,18 +183,36 @@ export interface SentAnswer {
 }
 
 /**
- * Does the item, read again, show THIS click's answer (re-check rv-6mk-c)? The
- * route marks the item with the click's id inside its queue slot (after the
- * comment, before the close; with the review record for Accept and Reverse), so
- * the item says which click answered it, with no clock involved. Someone else's
- * close or comment never carries this click's id. A Needs You answer also needs
- * the item done (closed, or in keep-open mode open without the `human` label):
- * the mark alone means the comment is saved and the close may have failed.
+ * After an uncertain failure (a lost response, the time limit, a 5xx), what the
+ * item read again says, in three cases only (re-check rv-6mk-d). The page never
+ * infers "sent" from the item: the mark comes before the close, so a closed item
+ * with this click's mark does not say who closed it.
+ *  - "saved": open (still waiting), with this click's mark: the comment is saved
+ *    and the close is not; a retry only closes.
+ *  - "failed": open, without this click's mark: the failure as it is.
+ *  - "closed": closed or done now (by anyone, also with this click's mark): the
+ *    neutral words, never "Responded" and never "not saved".
+ * For Accept and Reverse the review record stands in place of the close.
  */
-export function answerLanded(kind: OutboxKind, bead: Partial<Bead> | null | undefined, sent: SentAnswer): boolean {
-  if (!bead || !markedBy(bead.metadata, sent.clickId)) return false;
-  if (kind === "accept" || kind === "reverse") return bead.metadata?.["board.review"] === (kind === "accept" ? "accepted" : "reversed");
-  return bead.status === "closed" || !(bead.labels ?? []).includes("human");
+export function afterFailure(kind: OutboxKind, bead: Partial<Bead>, sent: SentAnswer): "saved" | "failed" | "closed" {
+  if (settledOnBoard(kind, bead)) return "closed";
+  return markedBy(bead.metadata, sent.clickId) ? "saved" : "failed";
+}
+
+/**
+ * A new click id: crypto.randomUUID where the page has it (a secure context);
+ * else one from crypto.getRandomValues; else from Math.random. Only uniqueness
+ * matters: the id ties the tries of one click together.
+ */
+export function newClickId(c: { randomUUID?: () => string; getRandomValues?: (bytes: Uint8Array) => Uint8Array } | undefined = globalThis.crypto): string {
+  if (typeof c?.randomUUID === "function") return c.randomUUID();
+  const bytes = new Uint8Array(16);
+  if (typeof c?.getRandomValues === "function") c.getRandomValues(bytes);
+  else for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 /** The click id of an answer: a retry of the same answer (same fingerprint) keeps it; another answer is a new click. */
@@ -207,9 +230,9 @@ export function needsRecheck(entry: OutboxEntry | undefined, bead: Partial<Bead>
   return entry?.state === "failed" && !!entry.uncertain && !!bead && settledOnBoard(entry.kind, bead);
 }
 
-/** A failed Needs You answer keeps its card, also when the item left the inbox meanwhile (someone else closed it). */
+/** A failed Needs You answer keeps its card, also when the item left the inbox meanwhile; a To Review failure keeps its row when the review is in place now. */
 export function keepsFailedCard(entry: OutboxEntry | undefined): boolean {
-  return entry?.state === "failed" && HUMAN_KINDS.includes(entry.kind);
+  return entry?.state === "failed" && (HUMAN_KINDS.includes(entry.kind) || !!entry.closedNow);
 }
 
 /** The kinds of the Needs You answers; a form with a route (a Reverse) shows its route's kind only. */

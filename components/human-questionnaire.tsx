@@ -42,7 +42,7 @@ export function HumanQuestionnaire({ bead, initialQuestions, route, disabled: he
       warning: route?.warning,
     });
   };
-  const disabled = readOnly || !!held || entry?.state === "sending" || (!route && bead.status === "closed");
+  const disabled = readOnly || !!held || entry?.state === "sending" || (!route && bead.status === "closed") || !!failed?.closedNow;
   // An edit deals with the failure: its error goes.
   const update = (id: string, change: (draft: Draft) => Draft) => {
     if (failed) outbox.clear(bead.id);
@@ -111,7 +111,7 @@ export function HumanQuestionnaire({ bead, initialQuestions, route, disabled: he
         })}
       </div>
       {error && <p role="alert" className="mt-2 text-[12px] text-red-500">{error}</p>}
-      <ClosedMeanwhile bead={bead} failed={!!failed} route={route} />
+      <ClosedMeanwhile bead={bead} failed={failed} route={route} />
       <p className="my-2 text-[12px] text-[var(--text-3)]">Dismiss uses the recommended choice for every question, with any comment you wrote.</p>
       <div className="flex flex-wrap justify-end gap-2">
         <button type="button" disabled={disabled} onClick={() => send("dismiss", recommendations)}

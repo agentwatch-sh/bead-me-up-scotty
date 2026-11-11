@@ -31,6 +31,8 @@ const fast = (command) => fs.rmSync(path.join(control, `delay-${command}`), { fo
 const refuse = (command, id) => fs.writeFileSync(path.join(control, `fail-${command}-${id}`), "");
 const allow = (command, id) => fs.rmSync(path.join(control, `fail-${command}-${id}`), { force: true });
 const SLOW_S = 3;
+// The neutral words of an answer whose item is closed now (lib/answer-outbox.ts).
+const CLOSED_NOW = "This question is closed now. Your answer may or may not be the one recorded: open the item to check.";
 const NOTE = "Approve, but keep the old flag.";
 
 const green = { id: "green", label: "Use green", description: "Use a new green theme.", recommended: false };
@@ -245,24 +247,27 @@ try {
     console.log("PASS answer speed: a 403, a 409 (JSON and HTML), a dropped connection and a hung request bring the card back with its error and the typed text; an edit clears the error");
   }
 
-  // ---- The board wrote the answer, but its response was lost: the answer is sent (review M1) ----
+  // ---- The board wrote the answer, but its response was lost: the neutral words, never "sent" (re-check rv-6mk-d) ----
   {
+    const typed = "Ship it.";
     const item = create("Lost response?", null);
     const panel = await visit(item);
-    await panel.getByRole("textbox", { name: "Write an answer" }).fill("Ship it.");
+    await panel.getByRole("textbox", { name: "Write an answer" }).fill(typed);
     await page.route(`**/beads/${item}/human`, async (route) => {
       await route.fetch(); // the board takes the answer
       await route.abort("failed"); // and the page never hears it
     });
     await leaves(panel, () => panel.getByRole("button", { name: "Respond", exact: true }).click());
-    await toast(`Responded to ${item}`).waitFor();
-    await painted();
-    assert.equal(await panelOf(item).count(), 0, "the card stays out");
-    assert.equal(await page.getByRole("alert").filter({ hasText: /did not reach the board/ }).count(), 0, "no error");
+    await panelOf(item).getByRole("alert").waitFor();
+    assert.equal(await panelOf(item).getByRole("alert").innerText(), CLOSED_NOW);
+    assert.equal(await panelOf(item).getByRole("textbox", { name: "Write an answer" }).inputValue(), typed, "the typed text is back");
+    assert.equal(await toast(`Responded to ${item}`).count(), 0, "a closed item never reads as sent after a failure");
     await page.unroute(`**/beads/${item}/human`);
+    await page.locator(`[data-closed-meanwhile="${item}"]`).getByRole("button", { name: "OK", exact: true }).click();
+    await panelOf(item).waitFor({ state: "detached" });
     assert.equal(show(item).close_reason, "Responded");
     assert.equal(mine(item).length, 1);
-    console.log("PASS answer speed: a lost response after the board wrote the answer reads as sent, with no error");
+    console.log("PASS answer speed: a lost response on an item now closed gives the neutral words and the typed text, never \"sent\"");
   }
 
   // ---- The request fails while a manager answers the item: never "sent" (re-check Important 1) ----
@@ -281,9 +286,10 @@ try {
     const ms = await leaves(panel, () => panel.getByRole("button", { name: "Respond", exact: true }).click());
     assert.ok(ms < 1000, `the card left ${ms} ms after the click`);
     await panelOf(item).getByRole("alert").waitFor();
-    assert.match(await panelOf(item).getByRole("alert").innerText(), /did not reach the board/);
+    // Closed now, by anyone: the neutral words, never "Responded" and never "not saved".
+    assert.equal(await panelOf(item).getByRole("alert").innerText(), CLOSED_NOW);
     assert.equal(await panelOf(item).getByRole("textbox", { name: "Write an answer" }).inputValue(), typed, "the typed text is back");
-    await page.locator(`[data-closed-meanwhile="${item}"]`).getByText("This question was closed meanwhile; your answer is not saved.").waitFor();
+    await page.locator(`[data-closed-meanwhile="${item}"]`).getByRole("button", { name: "OK", exact: true }).waitFor();
     assert.equal(await toast(`Responded to ${item}`).count(), 0, "the manager's close never reads as the operator's answer");
     // The page shows the item as the board has it now: its form is disabled at once, no second click.
     assert.equal(await panelOf(item).getByRole("button", { name: "Respond", exact: true }).isDisabled(), true, "the closed item's form is disabled");
@@ -298,6 +304,60 @@ try {
     await panelOf(item).waitFor({ state: "detached" });
     assert.equal(mine(item).length, 0, "the operator's answer was not written");
     console.log("PASS answer speed: a manager's close during a failed request is not the operator's answer; the card stays with its error and text");
+  }
+
+  // ---- The recheck race: a new send while a recheck's read runs; the new try's result stands (re-check rv-6mk-d, Minor 3) ----
+  {
+    const typed = "Ship it on Tuesday.";
+    const item = create("A recheck race?", null);
+    const panel = await visit(item);
+    await panel.getByRole("textbox", { name: "Write an answer" }).fill(typed);
+    // Try 1 is dropped before the board; the read finds the item open: an uncertain failure.
+    await page.route(`**/beads/${item}/human`, (route) => route.abort("failed"));
+    await leaves(panel, () => panel.getByRole("button", { name: "Respond", exact: true }).click());
+    await panelOf(item).getByRole("alert").waitFor();
+    assert.match(await panelOf(item).getByRole("alert").innerText(), /did not reach the board/);
+    // The next read of the item is held: the recheck's.
+    const held = [];
+    await page.route(new RegExp(`/beads/${item}$`), (route) => {
+      if (held.length === 0 && route.request().method() === "GET") { held.push(route); return; }
+      return route.continue();
+    });
+    // A list that shows the item closed starts the recheck, whose read is held ...
+    const real = await (await page.request.get(`${base}${listPath}`)).json();
+    const closedList = { ...real, beads: real.beads.map((b) => (b.id === item ? { ...b, status: "closed", close_reason: "Responded" } : b)) };
+    await page.route(`**${listPath}`, (route) => route.fulfill({ json: closedList }));
+    // A write elsewhere on the board sends the page its change event: it asks for the list.
+    const other = bd("create", "Nudge the list", "--type", "task", "--json").id;
+    const nudge = () => runAsync("agent:test", ["update", other, "--set-metadata", `nudge=${Date.now()}`]);
+    await nudge();
+    for (let i = 0; i < 100 && held.length === 0; i++) await new Promise((done) => setTimeout(done, 100));
+    assert.equal(held.length, 1, "the recheck's read is held");
+    // ... then the real list (the item is open) brings the form back, and the operator sends again: try 2, dropped too.
+    await page.unroute(`**${listPath}`);
+    const listed = page.waitForResponse((r) => r.request().method() === "GET" && new URL(r.url()).pathname.endsWith(listPath));
+    await nudge();
+    await listed;
+    const respond = panelOf(item).getByRole("button", { name: "Respond", exact: true });
+    for (let i = 0; i < 50 && await respond.isDisabled(); i++) await new Promise((done) => setTimeout(done, 100));
+    assert.equal(await respond.isDisabled(), false, "the open item's form is back");
+    await respond.click();
+    await panelOf(item).getByRole("alert").waitFor();
+    await painted();
+    // The old recheck's read now answers "closed": it must not touch try 2's failure.
+    const closedBead = { ...show(item), status: "closed", close_reason: "Responded" };
+    await held[0].fulfill({ json: closedBead });
+    await new Promise((done) => setTimeout(done, 1000));
+    await painted();
+    assert.match(await panelOf(item).getByRole("alert").innerText(), /did not reach the board/, "try 2's failure stands");
+    assert.notEqual(await panelOf(item).getByRole("alert").innerText(), CLOSED_NOW);
+    // Try 3 reaches the board.
+    await page.unroute(`**/beads/${item}/human`);
+    await page.unroute(new RegExp(`/beads/${item}$`));
+    await panelOf(item).getByRole("button", { name: "Respond", exact: true }).click();
+    await toast(`Responded to ${item}`).waitFor();
+    assert.equal(mine(item).length, 1);
+    console.log("PASS answer speed: a recheck of an older try never changes a newer send's result");
   }
 
   // ---- The operator clicks on a stale card after a manager closed the item: refused, nothing written ----
@@ -344,14 +404,18 @@ try {
     assert.equal(await panelOf(item).getByRole("alert").innerText(),
       "The board did not answer within 30 s; your answer may still be saved: check the item before answering again.");
     assert.equal(await panelOf(item).getByRole("textbox", { name: "Write an answer" }).inputValue(), typed);
-    // The board finishes the write: the next list shows the item closed, the page reads it
-    // again, finds this answer, and counts it as sent.
-    await toast(`Responded to ${item}`).waitFor({ timeout: 60000 });
-    await panelOf(item).waitFor({ state: "detached", timeout: 30000 });
+    // The board finishes the write: the next list shows the item closed, the page reads it again
+    // and takes the neutral words, with the typed text; it never counts the answer as sent.
+    await page.waitForFunction(([id, words]) => document.querySelector(`[data-human-answer="${id}"] [role="alert"]`)?.textContent === words,
+      [item, CLOSED_NOW], { timeout: 60000 });
+    assert.equal(await panelOf(item).getByRole("textbox", { name: "Write an answer" }).inputValue(), typed);
+    assert.equal(await toast(`Responded to ${item}`).count(), 0);
+    await page.locator(`[data-closed-meanwhile="${item}"]`).getByRole("button", { name: "OK", exact: true }).click();
+    await panelOf(item).waitFor({ state: "detached" });
     fast("close");
     assert.equal(show(item).close_reason, "Responded");
     assert.equal(mine(item).length, 1);
-    console.log("PASS answer speed: a board slower than 30 s: the card comes back saying the answer may still be saved, then the late write reads as sent");
+    console.log("PASS answer speed: a board slower than 30 s: the card comes back saying the answer may still be saved, then the neutral words when the item closes");
   }
 
   // ---- The detail drawer: the form gives way to "Sending your answer…" ----
@@ -412,6 +476,33 @@ try {
     fast("close");
     assert.equal(show(reversed).metadata["board.review"], "reversed");
     console.log("PASS answer speed: Accept and Reverse leave at the click; a failed Accept comes back with its error");
+  }
+
+  // ---- A page without crypto.randomUUID (plain HTTP): the answer still goes, never stuck in "Sending" (re-check rv-6mk-d) ----
+  {
+    const bare = await context.newPage();
+    bare.on("pageerror", (error) => errors.push(error.message));
+    await bare.addInitScript(() => { Object.defineProperty(Crypto.prototype, "randomUUID", { value: undefined, configurable: true }); });
+    const item = create("No randomUUID?", null);
+    const card = bare.locator(`[data-human-answer="${item}"]`);
+    for (let attempt = 1; ; attempt++) {
+      await bare.goto(`${base}/p/${project}?view=needsyou`);
+      try {
+        await card.getByRole("textbox", { name: "Write an answer" }).waitFor({ timeout: 8000 });
+        break;
+      } catch (e) {
+        if (attempt === 4) throw e;
+      }
+    }
+    assert.equal(await bare.evaluate(() => typeof crypto.randomUUID), "undefined");
+    await card.getByRole("textbox", { name: "Write an answer" }).fill("Ship it anyway.");
+    await card.getByRole("button", { name: "Respond", exact: true }).click();
+    await card.waitFor({ state: "detached" });
+    await bare.locator("[data-sonner-toast]").filter({ hasText: `Responded to ${item}` }).waitFor();
+    assert.equal(show(item).close_reason, "Responded");
+    assert.equal(mine(item).length, 1);
+    await bare.close();
+    console.log("PASS answer speed: without crypto.randomUUID the click id comes from getRandomValues; the answer goes");
   }
 
   await context.close();

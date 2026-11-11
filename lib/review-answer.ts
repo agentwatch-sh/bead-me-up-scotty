@@ -3,7 +3,7 @@ import type { Bead } from "./schema";
 import type { BeadsStore, SlotSteps } from "./store";
 import { humanBodySchema, validateHumanAnswer } from "./human-validate";
 import { ACKED_KEY, REVIEW_KEY, REVIEWED_BY_KEY, REVIEWED_AT_KEY, ReverseError, errorTag, needsReview, reverseAnswer, type ReverseStore } from "./review";
-import { ANSWER_CLICK_KEY, clickIdOf, markedBy } from "./answer-click";
+import { ANSWER_CLICK_KEY, clickIdOf } from "./answer-click";
 
 export const reviewBodySchema = z.discriminatedUnion("action", [
   // `click_id`: the id of the click (lib/answer-click.ts); a retry of the same click keeps it.
@@ -57,9 +57,6 @@ export async function answerReview(store: BeadsStore, id: string, body: ReviewBo
   return store.inOneSlot(async (s) => {
     // `bd show` leaves the comments out, and the latest answer decides.
     const found = await s.get(id);
-    // This click already made the review (its response was lost): done, no write.
-    const verdictKey = body.action === "accept" ? "accepted" : "reversed";
-    if (found && markedBy(found.metadata, clickId) && found.metadata?.[REVIEW_KEY] === verdictKey) return { ok: true, bead: found };
     // The click's mark goes with the review record, never before it.
     const mark: Record<string, string> = clickId === null ? {} : { [ANSWER_CLICK_KEY]: clickId };
     const item = found ? { ...found, comments: await s.comments(id) } : null;

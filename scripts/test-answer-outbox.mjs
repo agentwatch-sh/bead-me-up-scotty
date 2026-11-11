@@ -11,10 +11,10 @@ const require = createRequire(import.meta.url);
 function load(name) {
   const exports = {};
   const code = ts.transpileModule(readFileSync(new URL(`../lib/${name}.ts`, import.meta.url), "utf8"), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
-  vm.runInNewContext(code, { exports, require: (id) => id.startsWith("./") ? load(id.slice(2)) : require(id), Error, Object, Date, Array, Set, Map, JSON, Number, String }, { filename: name });
+  vm.runInNewContext(code, { exports, require: (id) => id.startsWith("./") ? load(id.slice(2)) : require(id), Error, Object, Date, Array, Set, Map, JSON, Number, String, Uint8Array, Math }, { filename: name });
   return exports;
 }
-const { isHidden, outboxAfter, patchAnswered, outboxText, outboxKey, listWithStart, failureFor, answerLanded, mayHaveLanded, failureText, ANSWER_TIMEOUT_MS, clickIdFor, needsRecheck, keepsFailedCard, recheckStillCurrent } = load("answer-outbox");
+const { isHidden, outboxAfter, patchAnswered, outboxText, outboxKey, listWithStart, failureFor, afterFailure, mayHaveLanded, failureText, ANSWER_TIMEOUT_MS, clickIdFor, newClickId, needsRecheck, keepsFailedCard, recheckStillCurrent, SAVED_TEXT, CLOSED_NOW_TEXT } = load("answer-outbox");
 
 // The click: the item leaves at once, whatever list is on screen.
 let box = outboxAfter({}, { type: "send", id: "q-1", kind: "respond", draft: { text: "typed" } });
@@ -35,7 +35,7 @@ assert.equal(isHidden(box["q-1"], 1001), false, "a list requested after the 2xx 
 // A failure: the item is back with its error and the draft it was sent with.
 box = outboxAfter({}, { type: "send", id: "q-2", kind: "decline", draft: { text: "Wrong premise." } });
 box = outboxAfter(box, { type: "failed", id: "q-2", error: "close refused" });
-assert.deepEqual({ ...box["q-2"] }, { state: "failed", kind: "decline", draft: { text: "Wrong premise." }, error: "close refused", uncertain: false });
+assert.deepEqual({ ...box["q-2"] }, { state: "failed", kind: "decline", draft: { text: "Wrong premise." }, error: "close refused", uncertain: false, closedNow: false });
 assert.equal(isHidden(box["q-2"], undefined), false);
 assert.equal(isHidden(box["q-2"], 0), false);
 // A new send replaces the failure; a cleared failure is gone.
@@ -151,32 +151,35 @@ console.log("PASS answer outbox: an error shows only in the form of its own kind
 }
 console.log("PASS answer outbox: which failures are checked against the item, and their words");
 
-// ---- Landed: the item carries THIS click's mark, and is done (re-check rv-6mk-c) ----
+// ---- After an uncertain failure: three cases, no inference of "sent" (re-check rv-6mk-d) ----
 {
   const sent = { clickId: "click-a" };
-  const item = (status, labels, metadata = {}, close_reason = "Responded") => ({ id: "q-1", status, close_reason, labels, metadata });
+  const item = (status, labels, metadata = {}) => ({ id: "q-1", status, labels, metadata });
   const marked = { "scotty.answer_click": "click-a" };
   for (const kind of ["respond", "answers", "dismiss", "decline"]) {
-    assert.equal(answerLanded(kind, item("closed", ["human"], marked), sent), true, kind);
-    // Someone else's close (a plain close, a manager's answer) never carries this click's id.
-    assert.equal(answerLanded(kind, item("closed", ["human"]), sent), false, `${kind}: closed by someone else`);
-    assert.equal(answerLanded(kind, item("closed", ["human"], { "scotty.answer_click": "click-z" }), sent), false, `${kind}: another click`);
-    // The mark alone, the item still open: the comment is saved, the close is not: not landed.
-    assert.equal(answerLanded(kind, item("open", ["human"], marked), sent), false, `${kind}: still open`);
-    // Keep-open mode: open, the human label gone, and this click's mark.
-    assert.equal(answerLanded(kind, item("open", ["question"], marked), sent), true, `${kind}: keep-open`);
+    // 1. Open, with this click's mark: saved, the close failed.
+    assert.equal(afterFailure(kind, item("open", ["human"], marked), sent), "saved", kind);
+    // 2. Open, without this click's mark: the failure as it is.
+    assert.equal(afterFailure(kind, item("open", ["human"]), sent), "failed", kind);
+    assert.equal(afterFailure(kind, item("open", ["human"], { "scotty.answer_click": "click-z" }), sent), "failed", `${kind}: another click`);
+    // 3. Closed or done, by anyone, also with this click's mark: the neutral case, never "sent".
+    assert.equal(afterFailure(kind, item("closed", ["human"], marked), sent), "closed", `${kind}: closed with the mark`);
+    assert.equal(afterFailure(kind, item("closed", ["human"]), sent), "closed", `${kind}: closed by someone else`);
+    assert.equal(afterFailure(kind, item("open", ["question"], marked), sent), "closed", `${kind}: keep-open done`);
   }
-  // A Decline or a Dismiss closed by someone else, with no closer on the record: not this answer.
-  assert.equal(answerLanded("decline", item("closed", ["human"], {}, "Declined"), sent), false);
-  assert.equal(answerLanded("dismiss", item("closed", ["human"], {}, "Dismissed"), sent), false);
-  // To Review: the mark comes with the review record.
-  assert.equal(answerLanded("accept", item("closed", ["human"], { "board.review": "accepted", ...marked }), sent), true);
-  assert.equal(answerLanded("accept", item("closed", ["human"], { "board.review": "accepted" }), sent), false, "another reviewer's or an older acceptance");
-  assert.equal(answerLanded("reverse", item("closed", ["human"], { "board.review": "reversed", ...marked }), sent), true);
-  assert.equal(answerLanded("reverse", item("closed", ["human"], { "board.review": "pending", ...marked }), sent), false);
-  assert.equal(answerLanded("respond", null, sent), false);
+  // To Review: the review record in place of the close.
+  const review = (value, metadata = {}) => item("closed", ["human"], { "board.review": value, ...metadata });
+  for (const kind of ["accept", "reverse"]) {
+    assert.equal(afterFailure(kind, review("pending"), sent), "failed", kind);
+    assert.equal(afterFailure(kind, review("pending", marked), sent), "saved", kind);
+    assert.equal(afterFailure(kind, review("accepted", marked), sent), "closed", `${kind}: the record is in place`);
+    assert.equal(afterFailure(kind, review("reversed"), sent), "closed", `${kind}: someone else's record`);
+  }
+  assert.equal(SAVED_TEXT, "Your answer is saved; closing failed: try again.");
+  assert.equal(CLOSED_NOW_TEXT, "This question is closed now. Your answer may or may not be the one recorded: open the item to check.");
+  assert.ok(!/Responded|Declined|Dismissed|not saved/.test(CLOSED_NOW_TEXT), "the neutral words claim nothing");
 }
-console.log("PASS answer outbox: an answer counts as landed only when the done item carries this click's id");
+console.log("PASS answer outbox: after an uncertain failure, open+mark is saved, open is failed, closed or done is neutral");
 
 // ---- The click id: a retry of the same answer keeps it; an edited answer is a new click ----
 {
@@ -185,10 +188,17 @@ console.log("PASS answer outbox: an answer counts as landed only when the done i
   assert.equal(clickIdFor(undefined, "a", fresh), "id-1");
   assert.equal(clickIdFor({ fingerprint: "a", clickId: "id-1" }, "a", fresh), "id-1", "the same answer again: its click");
   assert.equal(clickIdFor({ fingerprint: "a", clickId: "id-1" }, "b", fresh), "id-2", "an edited answer: a new click");
+  // Without crypto.randomUUID (a page on plain HTTP): an id from getRandomValues; without either, still an id.
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+  assert.equal(newClickId({ randomUUID: () => "from-random-uuid" }), "from-random-uuid");
+  const viaValues = newClickId({ getRandomValues: (bytes) => { bytes.fill(171); return bytes; } });
+  assert.match(viaValues, uuid);
+  assert.match(newClickId(undefined), uuid);
+  assert.notEqual(newClickId(undefined), newClickId(undefined));
 }
-console.log("PASS answer outbox: a retry of the same answer keeps its click id; an edited one gets a new id");
+console.log("PASS answer outbox: the click id; without randomUUID it comes from getRandomValues");
 
-// ---- A failure that may still be written, and the card of an item closed meanwhile (re-check Important 1, Minor 1) ----
+// ---- An uncertain failure is checked again when the item settles; a failed answer keeps its card ----
 {
   const key = "q-1";
   let box = outboxAfter({}, { type: "send", id: key, kind: "respond", draft: { text: "x" } });
@@ -199,17 +209,19 @@ console.log("PASS answer outbox: a retry of the same answer keeps its click id; 
   assert.equal(needsRecheck(box[key], { status: "open", labels: ["question"] }), true, "keep-open: the label went");
   assert.equal(needsRecheck(box[key], { status: "open", labels: ["human"] }), false, "still waiting");
   assert.equal(needsRecheck({ ...box[key], uncertain: false }, { status: "closed", labels: ["human"] }), false);
-  // The check finds this click's answer: the failure becomes sent; else it is settled (certain).
-  assert.equal(outboxAfter(box, { type: "sent", id: key, at: 2000 })[key].state, "sent");
-  assert.equal(outboxAfter(box, { type: "settled", id: key })[key].uncertain, false);
-  assert.equal(outboxAfter(box, { type: "settled", id: key })[key].state, "failed");
-  // A failed answer keeps its card, also when the item left the inbox meanwhile (someone else closed it).
+  // The check never makes it "sent": it takes the neutral words and is certain.
+  const closed = outboxAfter(box, { type: "closedNow", id: key });
+  assert.deepEqual([closed[key].state, closed[key].uncertain, closed[key].closedNow, closed[key].error], ["failed", false, true, CLOSED_NOW_TEXT]);
+  assert.equal(closed[key].draft.text, "x", "the typed text stays");
+  assert.equal(outboxAfter({}, { type: "closedNow", id: key })[key], undefined);
+  // A failed answer keeps its card, also when the item left its list meanwhile.
   assert.equal(keepsFailedCard(box[key]), true);
-  assert.equal(keepsFailedCard({ state: "failed", kind: "accept", error: "e" }), false, "To Review keeps its own rows");
+  assert.equal(keepsFailedCard({ state: "failed", kind: "accept", error: "e" }), false, "a To Review failure keeps its row only when closed now");
+  assert.equal(keepsFailedCard({ state: "failed", kind: "accept", error: "e", closedNow: true }), true);
   assert.equal(keepsFailedCard({ state: "sending", kind: "respond" }), false);
   assert.equal(keepsFailedCard(undefined), false);
 }
-console.log("PASS answer outbox: an uncertain failure is checked again when the item settles; a failed answer keeps its card");
+console.log("PASS answer outbox: an uncertain failure is checked again when the item settles, into the neutral case; a failed answer keeps its card");
 // ---- The recheck race: a check of an older try never confirms over a newer send (re-check rv-6mk-c, Minor 2) ----
 {
   const older = { item: { id: "q-1" } };
