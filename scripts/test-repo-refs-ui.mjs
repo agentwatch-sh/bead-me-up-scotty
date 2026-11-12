@@ -12,6 +12,11 @@ const basePath = new URL(base).pathname.replace(/\/+$/, "");
 
 const FILES = new Set(["agentwatch/daemon/no_dump.py", "README.md"]);
 const PROVIDER = "/api/board/refs/selden/demo";
+// Two providers that do not answer the path checks (review of age-62v): one
+// answers its context and fails every path check with a 502, one never answers.
+const FAILING = "/api/board/refs/selden/failing";
+const SILENT = "/api/board/refs/selden/silent";
+let provider = PROVIDER;
 const FILE_LINK = "/board-file/selden/demo?path={path}&line={line}&col={column}";
 const description = [
   "The fix is in agentwatch/daemon/no_dump.py:68 and `README.md`, commit 55e6b91, issue #654,",
@@ -57,7 +62,7 @@ try {
     if (path.endsWith("/beads/stream")) return route.abort();
     if (path.endsWith("/beads")) {
       return route.fulfill({ json: { beads, meta: { kind: "demo", humanActor: "reviewer", humanAllowlist: ["reviewer"],
-        pollIntervalMs: 300000, repoRefsUrl: PROVIDER } } });
+        pollIntervalMs: 300000, repoRefsUrl: provider } } });
     }
     return route.fulfill({ json: {} });
   });
@@ -118,8 +123,39 @@ try {
     [["path", "README.md:3"], ["commit", "55e6b91"]], "the question text links");
   assert.equal(await fieldset.locator("button a").count(), 0, "no link inside an option button");
   assert.ok(await fieldset.getByRole("button", { name: /Keep README\.md/ }).isVisible());
+
+  // A failed path check is not asked again in a loop: the board waits a backoff.
+  const failing = { context: 0, paths: 0 };
+  await page.route(`**${FAILING}**`, (route) => {
+    const paths = new URL(route.request().url()).searchParams.getAll("path");
+    if (!paths.length) {
+      failing.context += 1;
+      return route.fulfill({ json: { s: "ok", data: { github: "agentwatch-sh/agentwatch", file_link: FILE_LINK, files: [] } } });
+    }
+    failing.paths += 1;
+    return route.fulfill({ status: 502, json: { s: "error", errmsg: "Bad gateway" } });
+  });
+  provider = FAILING;
+  await page.goto(`${base}/p/demo?bead=refs-1`);
+  await dialog.locator('a[data-repo-ref="commit"]').first().waitFor();
+  await page.waitForTimeout(2500);
+  assert.equal(failing.context, 1, "one context request");
+  assert.ok(failing.paths >= 1 && failing.paths <= 2, `the failed paths were asked ${failing.paths} times in 2.5 s`);
+  assert.equal(await dialog.locator('a[data-repo-ref="path"]').count(), 0, "no path links without an answer");
+
+  // A provider that never answers its context is asked about no path.
+  const silent = [];
+  await page.route(`**${SILENT}**`, (route) => { silent.push(route.request().url()); });
+  provider = SILENT;
+  await page.goto(`${base}/p/demo?bead=refs-1`);
+  await dialog.locator('a[data-repo-ref="bead"]').first().waitFor();
+  await page.waitForTimeout(1500);
+  assert.equal(silent.length, 1, "only the context request");
+  assert.deepEqual(new URL(silent[0]).searchParams.getAll("path"), [], "no path is asked before a file link");
+  assert.equal(await dialog.locator('a[data-repo-ref="commit"], a[data-repo-ref="path"]').count(), 0);
   assert.deepEqual(errors, []);
-  console.log("PASS: repo references link at 390x844: paths, commits, issues, board items; code blocks and buttons stay plain");
+  console.log("PASS: repo references link at 390x844: paths, commits, issues, board items; code blocks and buttons stay plain;"
+    + " a failed check is not asked in a loop, a silent provider is asked no path");
 } finally {
   await browser.close();
 }

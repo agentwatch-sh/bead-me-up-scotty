@@ -265,8 +265,13 @@ and `GET <url>?path=a&path=b` lists in `files` the asked paths that are files
 of the project's checkout. The template takes `{path}`, `{line}` and `{column}`
 and must give a path on this origin or an `https://` URL. Without a provider,
 or without a GitHub repo, those references stay text: a path becomes a link
-only when the provider says that the file exists. `scripts/test-repo-refs.mjs`
-(the rules) and `scripts/test-repo-refs-ui.mjs` (Playwright, 390x844) test it.
+only when the provider says that the file exists. A path batch answer may
+leave out `github`: the repo of the first answer stays. Paths are asked about
+only after an answer with a file link. A failed check (an error status, no
+answer, or a batch answer with no file link) changes nothing on screen, and
+its paths wait before they are asked again: 5 s, doubling after each failure,
+at most 60 s. `scripts/test-repo-refs.mjs` (the rules) and
+`scripts/test-repo-refs-ui.mjs` (Playwright, 390x844) test it.
 
 ### Opening Scotty by a hostname
 

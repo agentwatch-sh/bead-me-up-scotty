@@ -220,3 +220,151 @@ console.log("PASS remark repo refs: text, inline code, fenced code, links, table
   assert.equal(bad.fileHref({ path: "README.md", line: null, column: null }), null);
   console.log("PASS refs source: context, batching, cache, stale answers, failures");
 }
+
+// --- A failed answer starts no request loop (review of age-62v) ---------------
+// The renderer asks for its unknown paths after every render, and an answer
+// renders again. A failed answer must change nothing (no render) and a failed
+// path waits a backoff (REFS_RETRY_MS, doubling, at most REFS_TTL_MS) before it
+// is asked again; a provider with no file link has no path asked at all.
+{
+  const { RefsSource, REFS_TTL_MS, REFS_RETRY_MS, retryDelay, sourceRefContext } = await import("../lib/repo-refs.ts");
+  assert.deepEqual([1, 2, 3, 4, 5, 6, 50].map(retryDelay),
+    [REFS_RETRY_MS, 2 * REFS_RETRY_MS, 4 * REFS_RETRY_MS, 8 * REFS_RETRY_MS, REFS_TTL_MS, REFS_TTL_MS, REFS_TTL_MS]);
+  const render = (source, text, extra = {}) => {
+    // What DescriptionContent does: the context from the source, a render, then request(unknown).
+    const unknown = new Set();
+    links(text, { ...sourceRefContext(source), isBead: ctx.isBead, beadHref: ctx.beadHref, ...extra }, unknown);
+    if (source && unknown.size) source.request(unknown);
+    return unknown;
+  };
+  const TEXT = "See README.md and agentwatch/daemon/no_dump.py:68, then 55e6b91.";
+  const CONTEXT = { github: "agentwatch-sh/agentwatch", file_link: "/f?path={path}&line={line}&col={column}", files: [] };
+  const asked = (url) => new URL(url, "https://box.example").searchParams.getAll("path");
+
+  // 1. A fetcher that always fails, asked again after every round.
+  {
+    let now = 5_000_000;
+    let calls = 0;
+    const failing = new RefsSource("/x", { fetcher: async () => { calls += 1; return { ok: false, json: async () => ({}) }; },
+      now: () => now, schedule: (fn) => fn() });
+    let bumps = 0;
+    failing.subscribe(() => { bumps += 1; });
+    await failing.ready;
+    for (let round = 0; round < 500; round += 1) {
+      failing.request(["README.md", "nope.md"]);
+      await failing.idle();
+    }
+    assert.equal(calls, 2, "the context once and the paths once while no time passes");
+    assert.equal(bumps, 0, "a failure changes nothing, so it renders nothing");
+    // 300 s of rounds, 100 ms apart: asked again at +5, +15, +35, +75, +135, +195 and +255 s.
+    for (let round = 0; round < 3000; round += 1) {
+      now += 100;
+      failing.request(["README.md", "nope.md"]);
+      await failing.idle();
+    }
+    assert.equal(calls, 2 + 7, "a bounded number of asks: the backoff grows to REFS_TTL_MS");
+    assert.equal(bumps, 0);
+  }
+
+  // 2. The context answers; every path check fails (a 502, a 401, the gateway gone).
+  //    Rounds of render + request, each answer rendering again, as the page does.
+  for (const failure of ["status", "throw", "no-links"]) {
+    let now = 7_000_000;
+    let pathCalls = 0;
+    const source = new RefsSource("/y", {
+      fetcher: async (url) => {
+        if (!asked(url).length) return { ok: true, json: async () => ({ s: "ok", data: CONTEXT }) };
+        pathCalls += 1;
+        if (failure === "throw") throw new Error("down");
+        if (failure === "status") return { ok: false, json: async () => ({ s: "error" }) };
+        // The gateway's no-links answer: the daemon is gone for now.
+        return { ok: true, json: async () => ({ s: "ok", data: { github: null, file_link: null, files: [] } }) };
+      },
+      now: () => now, schedule: (fn) => fn(),
+    });
+    let renders = 0;
+    source.subscribe(() => { renders += 1; });
+    await source.ready;
+    assert.equal(renders, 1, "the context answer renders once");
+    for (let round = 0; round < 500; round += 1) {
+      render(source, TEXT);
+      await source.idle();
+    }
+    assert.equal(pathCalls, 1, `${failure}: one path check, not a loop`);
+    assert.equal(renders, 1, `${failure}: a failed check renders nothing`);
+    assert.deepEqual(source.github, { owner: "agentwatch-sh", repo: "agentwatch" }, `${failure}: the context stays`);
+    assert.equal(source.fileLink, CONTEXT.file_link, `${failure}: the file link stays`);
+    now += retryDelay(1);
+    render(source, TEXT);
+    await source.idle();
+    assert.equal(pathCalls, 2, `${failure}: asked again after the backoff`);
+  }
+
+  // 3. A stale answer whose refresh fails keeps showing and waits the backoff too.
+  //    (The renderer collects only unknown paths; a stale one is asked by request().)
+  {
+    let now = 9_000_000;
+    let fail = false;
+    let pathCalls = 0;
+    const source = new RefsSource("/z", {
+      fetcher: async (url) => {
+        const paths = asked(url);
+        if (!paths.length) return { ok: true, json: async () => ({ data: CONTEXT }) };
+        pathCalls += 1;
+        if (fail) return { ok: false, json: async () => ({}) };
+        // A path batch answer may leave out the repo (the provider reads the remotes only for the context).
+        return { ok: true, json: async () => ({ data: { file_link: CONTEXT.file_link, files: paths.filter((p) => files.has(p)) } }) };
+      },
+      now: () => now, schedule: (fn) => fn(),
+    });
+    await source.ready;
+    render(source, TEXT);
+    await source.idle();
+    assert.equal(source.isFile("README.md"), true);
+    assert.deepEqual(source.github, { owner: "agentwatch-sh", repo: "agentwatch" }, "a path answer without github keeps the repo");
+    let renders = 0;
+    source.subscribe(() => { renders += 1; });
+    render(source, TEXT);
+    await source.idle();
+    assert.equal(pathCalls, 1, "fresh answers are not asked again");
+    now += REFS_TTL_MS + 1;
+    fail = true;
+    for (let round = 0; round < 200; round += 1) {
+      render(source, TEXT);
+      source.request(["README.md", "agentwatch/daemon/no_dump.py"]);
+      await source.idle();
+    }
+    assert.equal(pathCalls, 2, "a stale path whose refresh failed waits the backoff");
+    assert.equal(source.isFile("README.md"), true, "the stale answer still shows");
+    assert.equal(renders, 0);
+    // The same answer again changes nothing: no render.
+    fail = false;
+    now += REFS_TTL_MS + 1;
+    source.request(["README.md", "agentwatch/daemon/no_dump.py"]);
+    await source.idle();
+    assert.equal(pathCalls, 3);
+    assert.equal(renders, 0, "an answer that changes nothing renders nothing");
+  }
+
+  // 4. A provider that never answered collects no paths: nothing to ask.
+  {
+    const hanging = new RefsSource("/never", { fetcher: () => new Promise(() => {}), schedule: (fn) => fn() });
+    const failed = new RefsSource("/failed", { fetcher: async () => { throw new Error("down"); }, schedule: (fn) => fn() });
+    await failed.ready;
+    const empty = new RefsSource("/empty", { fetcher: async () => ({ ok: true, json: async () => ({ data: { github: null, file_link: null, files: [] } }) }),
+      schedule: (fn) => fn() });
+    await empty.ready;
+    for (const source of [hanging, failed, empty, null]) {
+      assert.deepEqual(sourceRefContext(source), { github: null, isFile: null, fileHref: null });
+      assert.equal(render(source, TEXT).size, 0, "no path is collected before a file link is known");
+    }
+    // The links that need no provider still work.
+    assert.deepEqual(links("age-36g and README.md", { ...sourceRefContext(hanging), isBead: ctx.isBead, beadHref: ctx.beadHref })
+      .map((l) => l.ref), ["bead"]);
+    // A context with a file link collects them.
+    const ready = new RefsSource("/ok", { fetcher: async () => ({ ok: true, json: async () => ({ data: CONTEXT }) }), schedule: () => {} });
+    await ready.ready;
+    assert.deepEqual([...render(ready, TEXT)].sort(), ["README.md", "agentwatch/daemon/no_dump.py"]);
+  }
+  console.log("PASS refs source: no request loop after a failure; no paths before a file link");
+}

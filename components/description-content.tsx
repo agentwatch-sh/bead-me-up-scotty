@@ -6,7 +6,7 @@ import rehypeHighlight from "rehype-highlight";
 import { api } from "@/lib/api-client";
 import { useOptionalApp } from "@/components/app-context";
 import { withBasePath } from "@/lib/base-path";
-import { RefsSource, isSafeRefHref, remarkRepoRefs, type RefContext } from "@/lib/repo-refs";
+import { RefsSource, isSafeRefHref, remarkRepoRefs, sourceRefContext, type RefContext } from "@/lib/repo-refs";
 
 /**
  * Renders a bead description as GitHub-flavored markdown (headings, lists,
@@ -88,13 +88,14 @@ export function DescriptionContent({
   const index = app?.index;
   const appProject = app?.projectId ?? projectId;
   const refs: RefContext = {
-    github: source?.github ?? null,
-    isFile: source?.isFile ?? null,
-    fileHref: source?.fileHref ?? null,
+    // No path is checked or linked before the provider answers with a file link.
+    ...sourceRefContext(source),
     isBead: index ? (id) => index.has(id) : null,
     beadHref: (id) => withBasePath(`/p/${encodeURIComponent(appProject)}?bead=${encodeURIComponent(id)}`),
   };
-  // Paths the source has not answered yet: asked for after the render.
+  // Paths the source has not answered yet: asked for after the render. The
+  // source skips a path in flight or in its backoff after a failed check, and a
+  // failure does not render again, so this asks no path in a loop.
   const unknown = new Set<string>();
   React.useEffect(() => {
     if (source && unknown.size) source.request(unknown);

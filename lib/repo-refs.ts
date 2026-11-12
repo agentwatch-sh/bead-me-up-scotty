@@ -367,9 +367,28 @@ export function remarkRepoRefs(options: RemarkRepoRefsOptions) {
 // at most MAX_PATHS_PER_TEXT, answers cached for REFS_TTL_MS. A stale answer
 // still shows while it is asked again, so a link does not blink. A failed
 // request changes nothing that is known; a path never answered stays plain.
+//
+// The renderer asks for its unknown paths after every render, and an answer
+// that changes something renders again. So a failure must never render, and a
+// path whose check failed waits a backoff (retryDelay) before it is asked
+// again: else a gateway restart, a 401 or a 502 would ask the same path in a
+// loop. A path batch answered with no file link (the provider's no-links
+// answer, its daemon gone for now) counts as a failure: the context and the
+// answers stay. Paths are collected only once the context has a file link
+// (sourceRefContext), so a provider that never answered is asked nothing.
+//
+// The provider may leave `github` out of a path batch answer (it reads the
+// remotes only for the context): then the known repo stays.
 
 /** How long a path answer is fresh. */
 export const REFS_TTL_MS = 60_000;
+/** The wait after a path's first failed check; it doubles after each further failure, up to REFS_TTL_MS. */
+export const REFS_RETRY_MS = 5_000;
+
+/** How long a path waits after its `failures`-th failed check in a row before it is asked again. */
+export function retryDelay(failures: number): number {
+  return Math.min(REFS_TTL_MS, REFS_RETRY_MS * 2 ** Math.max(0, failures - 1));
+}
 
 type Fetcher = (url: string) => Promise<{ ok: boolean; json: () => Promise<unknown> }>;
 
@@ -390,6 +409,8 @@ export class RefsSource {
   private readonly now: () => number;
   private readonly schedule: (fn: () => void) => void;
   private readonly answers = new Map<string, { exists: boolean; at: number }>();
+  /** Failed checks in a row of a path, and the time of the last one. */
+  private readonly failures = new Map<string, { count: number; at: number }>();
   private readonly asking = new Set<string>();
   private queue: string[] = [];
   private scheduled = false;
@@ -417,13 +438,15 @@ export class RefsSource {
 
   fileHref = (target: RefTarget): string | null => (this.fileLink ? fillFileLink(this.fileLink, target) : null);
 
-  /** Ask for the paths never answered or answered too long ago. */
+  /** Ask for the paths never answered or answered too long ago, unless a failed check is still in its backoff. */
   request(paths: Iterable<string>): void {
     const now = this.now();
     for (const path of paths) {
       if (this.asking.has(path)) continue;
       const hit = this.answers.get(path);
       if (hit && now - hit.at < REFS_TTL_MS) continue;
+      const failed = this.failures.get(path);
+      if (failed && now - failed.at < retryDelay(failed.count)) continue;
       this.asking.add(path);
       this.queue.push(path);
     }
@@ -468,21 +491,52 @@ export class RefsSource {
       data = null;
     }
     for (const p of paths) this.asking.delete(p);
-    if (!data) {
-      if (paths.length) this.bump();
+    const at = this.now();
+    if (!data || (paths.length > 0 && typeof data.file_link !== "string")) {
+      // Nothing changed: no render. Each path waits its backoff.
+      for (const p of paths) this.failures.set(p, { count: (this.failures.get(p)?.count ?? 0) + 1, at });
       return;
     }
-    this.github = parseGithubSlug(data.github);
-    const link = typeof data.file_link === "string" ? data.file_link : null;
-    this.fileLink = link && fillFileLink(link, { path: "x", line: 1, column: 1 }) ? link : null;
+    let changed = false;
+    if (paths.length === 0 || "github" in data) {
+      const github = parseGithubSlug(data.github);
+      if (github?.owner !== this.github?.owner || github?.repo !== this.github?.repo) {
+        this.github = github;
+        changed = true;
+      }
+    }
+    const raw = typeof data.file_link === "string" ? data.file_link : null;
+    const link = raw && fillFileLink(raw, { path: "x", line: 1, column: 1 }) ? raw : null;
+    if (link !== this.fileLink) {
+      this.fileLink = link;
+      changed = true;
+    }
     const files = new Set(Array.isArray(data.files) ? data.files.filter((f): f is string => typeof f === "string") : []);
-    const at = this.now();
-    for (const p of paths) this.answers.set(p, { exists: files.has(p), at });
-    this.bump();
+    for (const p of paths) {
+      const exists = files.has(p);
+      if (this.answers.get(p)?.exists !== exists) changed = true;
+      this.answers.set(p, { exists, at });
+      this.failures.delete(p);
+    }
+    if (changed) this.bump();
   }
 
   private bump(): void {
     this.version += 1;
     for (const listener of this.listeners) listener();
   }
+}
+
+/**
+ * The provider's part of a RefContext. A path is checked and linked only once
+ * the provider has answered with a file link: before that (no answer yet, a
+ * failed one, a project with no checkout) `isFile` and `fileHref` are null, so
+ * no path is collected and none is asked about.
+ */
+export function sourceRefContext(
+  source: RefsSource | null | undefined,
+): { github: RefContext["github"]; isFile: RefContext["isFile"]; fileHref: RefContext["fileHref"] } {
+  if (!source) return { github: null, isFile: null, fileHref: null };
+  const files = Boolean(source.fileLink);
+  return { github: source.github, isFile: files ? source.isFile : null, fileHref: files ? source.fileHref : null };
 }
