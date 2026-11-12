@@ -32,6 +32,8 @@ export interface RefContext {
   github: { owner: string; repo: string } | null;
   /** True: a file of the checkout. False: not one. Undefined: not known yet. */
   isFile?: ((path: string) => boolean | undefined) | null;
+  /** True when the answer about a path is too old: the path is asked again (the old answer still shows). */
+  isStale?: ((path: string) => boolean) | null;
   /** The link of a path, or null: then no path links. */
   fileHref?: ((target: RefTarget) => string | null) | null;
   /** True for an item id of this board. */
@@ -201,8 +203,9 @@ function collect(re: RegExp, text: string, each: (m: RegExpExecArray, start: num
 
 /**
  * The references in one run of plain text, in order, never overlapping. A
- * path whose existence is not known yet is added to `unknown` (at most
- * MAX_PATHS_PER_TEXT of them) and is plain text for now.
+ * path to ask about is added to `unknown` (at most MAX_PATHS_PER_TEXT of
+ * them): a path whose existence is not known yet (plain text for now), and a
+ * path whose answer is stale (`isStale`; its old answer still shows).
  */
 export function findRefs(text: string, ctx: RefContext, unknown?: Set<string>): Ref[] {
   if (typeof text !== "string" || !text) return [];
@@ -244,12 +247,9 @@ export function findRefs(text: string, ctx: RefContext, unknown?: Set<string>): 
     for (const c of pathCandidates(text)) {
       if (isBead && isBead(c.path)) continue;
       const exists = ctx.isFile(c.path);
-      if (exists === undefined) {
-        if (unknown && !unknown.has(c.path) && asked < MAX_PATHS_PER_TEXT) {
-          unknown.add(c.path);
-          asked += 1;
-        }
-        continue;
+      if ((exists === undefined || ctx.isStale?.(c.path)) && unknown && !unknown.has(c.path) && asked < MAX_PATHS_PER_TEXT) {
+        unknown.add(c.path);
+        asked += 1;
       }
       if (!exists) continue;
       const href = ctx.fileHref({ path: c.path, line: c.line, column: c.column });
@@ -343,7 +343,7 @@ function walk(node: MdNode, ctx: RefContext, unknown?: Set<string>) {
 
 export interface RemarkRepoRefsOptions {
   ctx: RefContext;
-  /** Receives the paths whose existence is not known yet. */
+  /** Receives the paths to ask about: not known yet, or known from a stale answer. */
   unknown?: Set<string>;
 }
 
@@ -364,28 +364,40 @@ export function remarkRepoRefs(options: RemarkRepoRefsOptions) {
 // checkout. Without a URL the board links only its own item ids.
 //
 // One source per URL: one context fetch, path checks batched into requests of
-// at most MAX_PATHS_PER_TEXT, answers cached for REFS_TTL_MS. A stale answer
-// still shows while it is asked again, so a link does not blink. A failed
-// request changes nothing that is known; a path never answered stays plain.
+// at most MAX_PATHS_PER_TEXT. A path answer is fresh for REFS_TTL_MS. The
+// renderer collects the paths of the text it renders that have no answer, or
+// whose answer is older than REFS_TTL_MS (isStale), and asks for them after
+// the render: so a stale path is asked again at the next render of a text
+// that names it. A stale answer still shows while it is asked again, so a
+// link does not blink. A failed request changes nothing that is known; a path
+// never answered stays plain.
 //
-// The renderer asks for its unknown paths after every render, and an answer
-// that changes something renders again. So a failure must never render, and a
+// The renderer calls request() after every render, and an answer that
+// changes something renders again. So a failure must never render, and a
 // path whose check failed waits a backoff (retryDelay) before it is asked
 // again: else a gateway restart, a 401 or a 502 would ask the same path in a
 // loop. A path batch answered with no file link (the provider's no-links
 // answer, its daemon gone for now) counts as a failure: the context and the
 // answers stay. Paths are collected only once the context has a file link
-// (sourceRefContext), so a provider that never answered is asked nothing.
+// (sourceRefContext), so a provider that never answered is asked no path.
+//
+// The context is asked once when the source is made. A failed context (an
+// error status, no answer) and a context with no file link and no GitHub repo
+// (the provider's no-links answer: a gateway restart, the user's daemon not
+// back yet) is a failure with the same backoff: request(), which the renderer
+// calls after every render also when it collected no path, asks the context
+// again once its backoff has passed. A context that answered is not asked
+// again during the page's life.
 //
 // The provider may leave `github` out of a path batch answer (it reads the
 // remotes only for the context): then the known repo stays.
 
 /** How long a path answer is fresh. */
 export const REFS_TTL_MS = 60_000;
-/** The wait after a path's first failed check; it doubles after each further failure, up to REFS_TTL_MS. */
+/** The wait after a path's (or the context's) first failed check; it doubles after each further failure, up to REFS_TTL_MS. */
 export const REFS_RETRY_MS = 5_000;
 
-/** How long a path waits after its `failures`-th failed check in a row before it is asked again. */
+/** How long a path, or the context, waits after its `failures`-th failed check in a row before it is asked again. */
 export function retryDelay(failures: number): number {
   return Math.min(REFS_TTL_MS, REFS_RETRY_MS * 2 ** Math.max(0, failures - 1));
 }
@@ -405,6 +417,11 @@ export class RefsSource {
   fileLink: string | null = null;
   /** Settles after the first context answer (or its failure). */
   readonly ready: Promise<void>;
+  /** True once a context answered with a file link or a GitHub repo: it is not asked again. */
+  private contextKnown = false;
+  private askingContext = false;
+  /** Failed context answers in a row, and the time of the last one. */
+  private contextFailures: { count: number; at: number } | null = null;
   private readonly fetcher: Fetcher;
   private readonly now: () => number;
   private readonly schedule: (fn: () => void) => void;
@@ -423,7 +440,7 @@ export class RefsSource {
     this.fetcher = options.fetcher;
     this.now = options.now ?? (() => Date.now());
     this.schedule = options.schedule ?? ((fn) => { setTimeout(fn, 0); });
-    this.ready = this.track(this.ask([]));
+    this.ready = this.askContext();
   }
 
   subscribe = (listener: () => void): (() => void) => {
@@ -436,11 +453,25 @@ export class RefsSource {
   /** True or false when answered (even if stale); undefined when never answered. */
   isFile = (path: string): boolean | undefined => this.answers.get(path)?.exists;
 
+  /** True when the path's answer is older than REFS_TTL_MS: the renderer collects it to ask again. */
+  isStale = (path: string): boolean => {
+    const hit = this.answers.get(path);
+    return hit !== undefined && this.now() - hit.at >= REFS_TTL_MS;
+  };
+
   fileHref = (target: RefTarget): string | null => (this.fileLink ? fillFileLink(this.fileLink, target) : null);
 
-  /** Ask for the paths never answered or answered too long ago, unless a failed check is still in its backoff. */
-  request(paths: Iterable<string>): void {
+  /**
+   * Ask for the paths never answered or answered too long ago, unless a failed
+   * check is still in its backoff. A context that failed is asked again here
+   * once its backoff has passed, also when no path is given.
+   */
+  request(paths: Iterable<string> = []): void {
     const now = this.now();
+    const failed = this.contextFailures;
+    if (!this.contextKnown && !this.askingContext && failed && now - failed.at >= retryDelay(failed.count)) {
+      void this.askContext();
+    }
     for (const path of paths) {
       if (this.asking.has(path)) continue;
       const hit = this.answers.get(path);
@@ -470,6 +501,11 @@ export class RefsSource {
     }
   }
 
+  private askContext(): Promise<void> {
+    this.askingContext = true;
+    return this.track(this.ask([]));
+  }
+
   private track(p: Promise<void>): Promise<void> {
     this.inflight.add(p);
     void p.finally(() => this.inflight.delete(p));
@@ -490,23 +526,28 @@ export class RefsSource {
     } catch {
       data = null;
     }
+    const context = paths.length === 0;
+    if (context) this.askingContext = false;
     for (const p of paths) this.asking.delete(p);
     const at = this.now();
-    if (!data || (paths.length > 0 && typeof data.file_link !== "string")) {
-      // Nothing changed: no render. Each path waits its backoff.
+    const raw = data && typeof data.file_link === "string" ? data.file_link : null;
+    const link = raw && fillFileLink(raw, { path: "x", line: 1, column: 1 }) ? raw : null;
+    const github = data && (context || "github" in data) ? parseGithubSlug(data.github) : undefined;
+    if (!data || (!context && raw === null) || (context && link === null && github === null)) {
+      // Nothing changed: no render. The context, or each path, waits its backoff.
+      if (context) this.contextFailures = { count: (this.contextFailures?.count ?? 0) + 1, at };
       for (const p of paths) this.failures.set(p, { count: (this.failures.get(p)?.count ?? 0) + 1, at });
       return;
     }
-    let changed = false;
-    if (paths.length === 0 || "github" in data) {
-      const github = parseGithubSlug(data.github);
-      if (github?.owner !== this.github?.owner || github?.repo !== this.github?.repo) {
-        this.github = github;
-        changed = true;
-      }
+    if (context) {
+      this.contextKnown = true;
+      this.contextFailures = null;
     }
-    const raw = typeof data.file_link === "string" ? data.file_link : null;
-    const link = raw && fillFileLink(raw, { path: "x", line: 1, column: 1 }) ? raw : null;
+    let changed = false;
+    if (github !== undefined && (github?.owner !== this.github?.owner || github?.repo !== this.github?.repo)) {
+      this.github = github;
+      changed = true;
+    }
     if (link !== this.fileLink) {
       this.fileLink = link;
       changed = true;
@@ -530,13 +571,18 @@ export class RefsSource {
 /**
  * The provider's part of a RefContext. A path is checked and linked only once
  * the provider has answered with a file link: before that (no answer yet, a
- * failed one, a project with no checkout) `isFile` and `fileHref` are null, so
- * no path is collected and none is asked about.
+ * failed one, a project with no checkout) `isFile`, `isStale` and `fileHref`
+ * are null, so no path is collected and none is asked about.
  */
 export function sourceRefContext(
   source: RefsSource | null | undefined,
-): { github: RefContext["github"]; isFile: RefContext["isFile"]; fileHref: RefContext["fileHref"] } {
-  if (!source) return { github: null, isFile: null, fileHref: null };
+): Pick<RefContext, "github" | "isFile" | "isStale" | "fileHref"> {
+  if (!source) return { github: null, isFile: null, isStale: null, fileHref: null };
   const files = Boolean(source.fileLink);
-  return { github: source.github, isFile: files ? source.isFile : null, fileHref: files ? source.fileHref : null };
+  return {
+    github: source.github,
+    isFile: files ? source.isFile : null,
+    isStale: files ? source.isStale : null,
+    fileHref: files ? source.fileHref : null,
+  };
 }

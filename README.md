@@ -267,11 +267,16 @@ and must give a path on this origin or an `https://` URL. Without a provider,
 or without a GitHub repo, those references stay text: a path becomes a link
 only when the provider says that the file exists. A path batch answer may
 leave out `github`: the repo of the first answer stays. Paths are asked about
-only after an answer with a file link. A failed check (an error status, no
-answer, or a batch answer with no file link) changes nothing on screen, and
+only after an answer with a file link. A path answer is fresh for 60 s: a
+render of a text that names a path with an older answer asks it again, and
+the old answer shows until the new one comes. A failed check (an error status,
+no answer, or a batch answer with no file link) changes nothing on screen, and
 its paths wait before they are asked again: 5 s, doubling after each failure,
-at most 60 s. `scripts/test-repo-refs.mjs` (the rules) and
-`scripts/test-repo-refs-ui.mjs` (Playwright, 390x844) test it.
+at most 60 s. A failed context (an error status, no answer, or an answer with
+no file link and no GitHub repo) waits the same way, and the next render after
+the wait asks it again; a context that answered is not asked again.
+`scripts/test-repo-refs.mjs` (the rules) and `scripts/test-repo-refs-ui.mjs`
+(Playwright, 390x844) test it.
 
 ### Opening Scotty by a hostname
 

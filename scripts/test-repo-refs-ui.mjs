@@ -16,6 +16,9 @@ const PROVIDER = "/api/board/refs/selden/demo";
 // answers its context and fails every path check with a 502, one never answers.
 const FAILING = "/api/board/refs/selden/failing";
 const SILENT = "/api/board/refs/selden/silent";
+// A provider whose context fails at the page load (a gateway restart), then
+// answers (review 2 of age-62v).
+const FLAKY = "/api/board/refs/selden/flaky";
 let provider = PROVIDER;
 const FILE_LINK = "/board-file/selden/demo?path={path}&line={line}&col={column}";
 const description = [
@@ -44,7 +47,7 @@ const beads = [
     notes: "Notes name README.md~2.",
     comments: [{ id: "c1", author: "agent:aw-lead", text: "Done in `55e6b91`; see other-1x2.", created_at: "2026-09-01T00:00:00Z" }],
   }),
-  bead("other-1x2", "The other item"),
+  bead("other-1x2", "The other item", { description: "Back to refs-1; see README.md and 55e6b91." }),
   bead("ask-1", "A question", { labels: ["human", "question"], metadata: { "scotty.choices": { version: 2, questions: [question] } } }),
 ];
 
@@ -153,9 +156,42 @@ try {
   assert.equal(silent.length, 1, "only the context request");
   assert.deepEqual(new URL(silent[0]).searchParams.getAll("path"), [], "no path is asked before a file link");
   assert.equal(await dialog.locator('a[data-repo-ref="commit"], a[data-repo-ref="path"]').count(), 0);
+
+  // A context that failed at the page load is asked again at a render after
+  // its backoff (5 s), and then the text links: no reload needed.
+  const flaky = { context: 0, paths: 0 };
+  await page.route(`**${FLAKY}**`, (route) => {
+    const paths = new URL(route.request().url()).searchParams.getAll("path");
+    if (!paths.length) {
+      flaky.context += 1;
+      if (flaky.context === 1) return route.fulfill({ status: 502, json: { s: "error", errmsg: "Bad gateway" } });
+      return route.fulfill({ json: { s: "ok", data: { github: "agentwatch-sh/agentwatch", file_link: FILE_LINK, files: [] } } });
+    }
+    flaky.paths += 1;
+    return route.fulfill({ json: { s: "ok", data: { file_link: FILE_LINK, files: paths.filter((p) => FILES.has(p)) } } });
+  });
+  provider = FLAKY;
+  await page.goto(`${base}/p/demo?bead=refs-1`);
+  await dialog.locator('a[data-repo-ref="bead"]').first().waitFor();
+  await page.waitForTimeout(1000);
+  assert.equal(flaky.context, 1, "the context failed once and waits its backoff");
+  assert.equal(await dialog.locator('a[data-repo-ref="commit"], a[data-repo-ref="path"]').count(), 0, "no repo links yet");
+  await page.waitForTimeout(4500);
+  // A render after the backoff: open the other item; its text links.
+  await dialog.locator('a[data-repo-ref="bead"]').first().click();
+  await dialog.getByText("The other item", { exact: true }).waitFor();
+  await dialog.locator('a[data-repo-ref="path"]', { hasText: "README.md" }).waitFor();
+  assert.equal(await dialog.locator('a[data-repo-ref="commit"]').count(), 1, "a commit link after the retry");
+  assert.equal(flaky.context, 2, "the context was asked once more");
+  // Back to the first item: its text links too, with no reload.
+  await dialog.locator('a[data-repo-ref="bead"]', { hasText: "refs-1" }).click();
+  await dialog.locator('a[data-repo-ref="path"]', { hasText: "agentwatch/daemon/no_dump.py:68" }).waitFor();
+  assert.equal(await dialog.locator('a[data-repo-ref="commit"]').count(), 2);
+  assert.equal(flaky.context, 2, "an answered context is not asked again");
+  assert.ok(flaky.paths >= 1 && flaky.paths <= 3, `the paths were asked ${flaky.paths} times`);
   assert.deepEqual(errors, []);
   console.log("PASS: repo references link at 390x844: paths, commits, issues, board items; code blocks and buttons stay plain;"
-    + " a failed check is not asked in a loop, a silent provider is asked no path");
+    + " a failed check is not asked in a loop, a silent provider is asked no path, a failed context is asked again");
 } finally {
   await browser.close();
 }

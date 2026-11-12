@@ -93,12 +93,14 @@ export function DescriptionContent({
     isBead: index ? (id) => index.has(id) : null,
     beadHref: (id) => withBasePath(`/p/${encodeURIComponent(appProject)}?bead=${encodeURIComponent(id)}`),
   };
-  // Paths the source has not answered yet: asked for after the render. The
-  // source skips a path in flight or in its backoff after a failed check, and a
-  // failure does not render again, so this asks no path in a loop.
+  // Paths the source has no answer for, or a stale one: asked for after the
+  // render. The source skips a path in flight or in its backoff after a failed
+  // check, and a failure does not render again, so this asks no path in a
+  // loop. Called also with no path: a context that failed (a gateway restart,
+  // the daemon not back yet) is asked again there once its backoff has passed.
   const unknown = new Set<string>();
   React.useEffect(() => {
-    if (source && unknown.size) source.request(unknown);
+    if (source) source.request(unknown);
   });
   const pushDetail = app?.pushDetail;
 
