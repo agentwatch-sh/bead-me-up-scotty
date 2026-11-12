@@ -47,3 +47,8 @@ export function useApp() {
   if (!ctx) throw new Error("useApp must be used within AppProvider");
   return ctx;
 }
+
+/** The app context, or null outside the provider (a renderer used on its own). */
+export function useOptionalApp() {
+  return React.useContext(AppContext);
+}

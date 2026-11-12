@@ -104,6 +104,22 @@ export function lanePrefix(): string | null {
   return process.env.SCOTTY_LANE_PREFIX || null;
 }
 
+/**
+ * Repo references (agentwatch board age-62v): SCOTTY_REPO_REFS_URL names the
+ * provider that tells the board a project's GitHub repo, its file link and
+ * which paths are files of its checkout (see lib/repo-refs.ts). `{project}`
+ * becomes the project id. Only a path on this origin is used (the browser
+ * sends its own login with the request); anything else, or no variable, gives
+ * null, and the board then links only its own item ids. The demo project has
+ * no checkout: null.
+ */
+export function repoRefsUrl(projectId: string, kind: string): string | null {
+  const template = process.env.SCOTTY_REPO_REFS_URL;
+  if (!template || kind !== "bd") return null;
+  const url = template.replace(/\{project\}/g, encodeURIComponent(projectId));
+  return url.startsWith("/") && !url.startsWith("//") && !url.includes("\\") ? url : null;
+}
+
 function configDir(): string {
   const base = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config");
   return path.join(base, "bead-me-up-scotty");

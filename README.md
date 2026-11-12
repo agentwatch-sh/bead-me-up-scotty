@@ -242,6 +242,32 @@ beads whose rank changes). Agents and other clients then see the order in
 `bd list --json` and `bd ready --json`. Your saved order is copied across once
 when you switch it on. `scripts/test-order-store.mjs` documents how to test it.
 
+### Links to repo items in board text
+
+In a description, a comment, notes and the text of a version-2 question,
+references to repo items become links:
+
+- an item id of this board (`bd-36g`): the item, in its drawer;
+- a commit SHA (7 to 40 lower-case hex characters, at least one digit and one
+  letter, a whole word), `#N` and `owner/repo#N`: GitHub, in a new tab;
+- a repo-relative file path, with an optional `:LINE`, `~LINE` or
+  `:LINE:COL` (`lib/repo-refs.ts:68`): the file link, in a new tab.
+
+Text in a fenced or indented code block, and the text of a link someone wrote,
+stays as it is. Inline code is linked when its whole content is one reference.
+An option label or description in a question shows a reference as plain text:
+a link cannot nest in the option's button.
+
+Commits, issues and paths need a provider: `SCOTTY_REPO_REFS_URL` names a URL
+on the same origin (`{project}` becomes the project id). `GET <url>` answers
+`{"github": "owner/repo" | null, "file_link": "<template>" | null, "files": []}`,
+and `GET <url>?path=a&path=b` lists in `files` the asked paths that are files
+of the project's checkout. The template takes `{path}`, `{line}` and `{column}`
+and must give a path on this origin or an `https://` URL. Without a provider,
+or without a GitHub repo, those references stay text: a path becomes a link
+only when the provider says that the file exists. `scripts/test-repo-refs.mjs`
+(the rules) and `scripts/test-repo-refs-ui.mjs` (Playwright, 390x844) test it.
+
 ### Opening Scotty by a hostname
 
 Scotty only answers browsers that address it as `localhost` (or `*.localhost`)

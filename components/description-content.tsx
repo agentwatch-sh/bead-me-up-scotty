@@ -1,8 +1,12 @@
 "use client";
-import ReactMarkdown, { type Components } from "react-markdown";
+import * as React from "react";
+import ReactMarkdown, { type Components, type UrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import { api } from "@/lib/api-client";
+import { useOptionalApp } from "@/components/app-context";
+import { withBasePath } from "@/lib/base-path";
+import { RefsSource, isSafeRefHref, remarkRepoRefs, type RefContext } from "@/lib/repo-refs";
 
 /**
  * Renders a bead description as GitHub-flavored markdown (headings, lists,
@@ -14,14 +18,46 @@ import { api } from "@/lib/api-client";
  *  - Task-list checkboxes (`- [ ]` / `- [x]`) are interactive when `onToggleTask`
  *    is provided; toggling reports the checkbox's document-order index so the
  *    caller can rewrite the source markdown (see lib/beads-view toggleTask).
+ *  - References to repo items become links (lib/repo-refs.ts): a file path of
+ *    the checkout, a commit, an issue, an item of this board. The project's
+ *    provider (meta.repoRefsUrl) tells which paths are files; an item link
+ *    opens the item here, the others open a new tab.
  */
 const IMG_PATTERN = "!\\[([^\\]]*)\\]\\((attachment:\\/\\/[^)\\s]+|https?:\\/\\/[^)\\s]+)\\)";
 const SAFE_URL_PATTERN = /^(https?:|mailto:|attachment:\/\/)/i;
 
 const INLINE_ELEMENTS = ["p", "strong", "em", "del", "code", "br", "a"];
 
-function safeUrlTransform(url: string): string {
-  return SAFE_URL_PATTERN.test(url) ? url : "";
+// A link the reference plugin made (marked data-repo-ref) may also be a path
+// on this origin; a link written in the text keeps the strict rule.
+const safeUrlTransform: UrlTransform = (url, key, node) => {
+  if (SAFE_URL_PATTERN.test(url)) return url;
+  const ref = node?.properties?.dataRepoRef;
+  return key === "href" && typeof ref === "string" && isSafeRefHref(url) ? url : "";
+};
+
+// One provider source per URL for the page's life: every description of a
+// project shares its answers.
+const sources = new Map<string, RefsSource>();
+
+function sourceFor(url: string | null | undefined): RefsSource | null {
+  if (!url || typeof window === "undefined") return null;
+  let source = sources.get(url);
+  if (!source) {
+    source = new RefsSource(url, {
+      fetcher: (u) => fetch(u, { credentials: "same-origin", headers: { Accept: "application/json" } }),
+    });
+    sources.set(url, source);
+  }
+  return source;
+}
+
+const noSubscribe = () => () => {};
+const noVersion = () => 0;
+
+/** True for a plain left click: the others keep the browser's own meaning. */
+function plainClick(event: React.MouseEvent): boolean {
+  return event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey;
 }
 
 export function DescriptionContent({
@@ -45,14 +81,54 @@ export function DescriptionContent({
   // this counter assigns each the index of its source task marker.
   const counter = { i: 0 };
 
+  const app = useOptionalApp();
+  const source = sourceFor(app?.meta?.repoRefsUrl);
+  // Re-render when the provider answers.
+  React.useSyncExternalStore(source?.subscribe ?? noSubscribe, source?.getVersion ?? noVersion, noVersion);
+  const index = app?.index;
+  const appProject = app?.projectId ?? projectId;
+  const refs: RefContext = {
+    github: source?.github ?? null,
+    isFile: source?.isFile ?? null,
+    fileHref: source?.fileHref ?? null,
+    isBead: index ? (id) => index.has(id) : null,
+    beadHref: (id) => withBasePath(`/p/${encodeURIComponent(appProject)}?bead=${encodeURIComponent(id)}`),
+  };
+  // Paths the source has not answered yet: asked for after the render.
+  const unknown = new Set<string>();
+  React.useEffect(() => {
+    if (source && unknown.size) source.request(unknown);
+  });
+  const pushDetail = app?.pushDetail;
+
   const components: Components = {
-    a: ({ children, ...props }) => plainLinks ? (
-      <span className="text-[var(--brand)] underline">{children}</span>
-    ) : (
-      <a {...props} target="_blank" rel="noopener noreferrer" className="text-[var(--brand)] underline">
-        {children}
-      </a>
-    ),
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    a: ({ children, node, ...props }) => {
+      const kind = (props as Record<string, unknown>)["data-repo-ref"];
+      if (plainLinks) {
+        // A link cannot nest in a button: a reference there is text too.
+        return <span className="text-[var(--brand)] underline">{children}</span>;
+      }
+      const beadId = (props as Record<string, unknown>)["data-bead-id"];
+      if (kind === "bead" && typeof beadId === "string" && pushDetail) {
+        // An item of this board opens here, in its drawer.
+        return (
+          <a {...props} className="text-[var(--brand)] underline"
+            onClick={(event) => {
+              if (!plainClick(event)) return;
+              event.preventDefault();
+              pushDetail(beadId);
+            }}>
+            {children}
+          </a>
+        );
+      }
+      return (
+        <a {...props} target="_blank" rel="noopener noreferrer" className="text-[var(--brand)] underline">
+          {children}
+        </a>
+      );
+    },
     ...(inline ? { p: ({ children }) => <span>{children}</span> } : {}),
     img: ({ src, alt }) => {
       const raw = typeof src === "string" ? src : "";
@@ -94,7 +170,7 @@ export function DescriptionContent({
     <Wrap className={className}>
       <Wrap className="bd-md">
         <ReactMarkdown
-          remarkPlugins={[remarkGfm]}
+          remarkPlugins={[remarkGfm, [remarkRepoRefs, { ctx: refs, unknown }]]}
           // Colorize fenced code blocks; `ignoreMissing` keeps unknown languages
           // from throwing (they fall back to plain text). Themed via .hljs CSS.
           rehypePlugins={[[rehypeHighlight, { ignoreMissing: true }]]}

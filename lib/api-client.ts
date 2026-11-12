@@ -16,6 +16,8 @@ export interface Meta {
   readOnly?: boolean;
   /** Label prefix (SCOTTY_LANE_PREFIX) that partitions work into Focus-view lane chips. */
   lanePrefix?: string | null;
+  /** The repo references provider of this project (SCOTTY_REPO_REFS_URL), or null. */
+  repoRefsUrl?: string | null;
 }
 export interface BeadsResponse {
   beads: Bead[];

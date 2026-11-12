@@ -1,5 +1,5 @@
 import { getStore } from "@/lib/store";
-import { getConfig, isReadOnly, lanePrefix } from "@/lib/config";
+import { getConfig, isReadOnly, lanePrefix, repoRefsUrl } from "@/lib/config";
 import { createInputSchema } from "@/lib/schema";
 import { ok, fail } from "@/lib/api";
 
@@ -24,6 +24,7 @@ export async function GET(_req: Request, { params }: Ctx) {
         orderStore: cfg.orderStore,
         readOnly: isReadOnly(_req),
         lanePrefix: lanePrefix(),
+        repoRefsUrl: repoRefsUrl(projectId, store.kind),
       },
     });
   } catch (e) {
