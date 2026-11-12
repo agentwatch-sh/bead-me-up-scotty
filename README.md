@@ -274,7 +274,10 @@ no answer, or a batch answer with no file link) changes nothing on screen, and
 its paths wait before they are asked again: 5 s, doubling after each failure,
 at most 60 s. A failed context (an error status, no answer, or an answer with
 no file link and no GitHub repo) waits the same way, and the next render after
-the wait asks it again; a context that answered is not asked again.
+the wait asks it again; a context that answered is not asked again. A context
+that fails every time (a provider with no checkout of the project, or one too
+old to give links) is asked again for as long as the page is open: at most once
+per 60 s per open page, and only at a render.
 `scripts/test-repo-refs.mjs` (the rules) and `scripts/test-repo-refs-ui.mjs`
 (Playwright, 390x844) test it.
 
