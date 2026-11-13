@@ -6,10 +6,13 @@
 // that answers the viewer's zone and its letters: `{zone, labels:
 // [{utc_offset_seconds, letters}]}`, the zone null when the host knows none.
 // A time takes the letters of the zone's offset at that time ("EST" in
-// January, "EDT" in July). With no URL, no answer or a null zone, the board
-// uses the browser's own zone (Intl) and its short name ("GMT-3" written
-// "UTC-3"). The page reads the zone at load and again at most every 15 minutes
-// (the zone follows a trip), and a change renders again.
+// January, "EDT" in July). The board sends its browser's zone
+// (`?fallback=<Intl zone>`); with a null zone the host may answer that zone's
+// letters (`source: "browser"`), so Buenos Aires reads "ART", never the
+// browser's "GMT-3". With no URL, no answer or no letters, the board uses the
+// browser's own zone (Intl) and its short name ("GMT-3" written "UTC-3"). The
+// page reads the zone at load and again at most every 15 minutes (the zone
+// follows a trip), and a change renders again.
 //
 // No React and no imports: tested under node (scripts/test-viewer-zone.mjs).
 
@@ -23,6 +26,8 @@ export interface ZoneLabel {
 export interface ViewerZone {
   /** The host's zone, or null: the browser's own zone. */
   zone: string | null;
+  /** With a null zone: the browser zone that the labels are for (the zone the page sent), else null. */
+  fallback: string | null;
   labels: readonly ZoneLabel[];
 }
 
@@ -30,7 +35,9 @@ const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "
 const LETTERS_RE = /^(?:[A-Za-z]{1,6}|UTC[+-]\d{1,2}(?::\d{2})?)$/;
 
 /** No zone from the host: the browser's own zone. */
-export const NO_ZONE: ViewerZone = Object.freeze({ zone: null, labels: Object.freeze([]) as readonly ZoneLabel[] });
+export const NO_ZONE: ViewerZone = Object.freeze({
+  zone: null, fallback: null, labels: Object.freeze([]) as readonly ZoneLabel[],
+});
 
 let current: ViewerZone = NO_ZONE;
 const listeners = new Set<() => void>();
@@ -45,21 +52,31 @@ function knownZone(zone: unknown): zone is string {
   }
 }
 
-/** The host's answer as a ViewerZone; a zone this browser does not know, or no answer, is NO_ZONE. */
+/**
+ * The host's answer as a ViewerZone; a zone this browser does not know, or no
+ * answer, is NO_ZONE. A null zone with source "browser" keeps the labels of
+ * the browser zone the page sent (`fallback`, which loadViewerZone adds).
+ */
 export function normalizeZone(answer: unknown): ViewerZone {
   const data = answer && typeof answer === "object" ? (answer as Record<string, unknown>) : {};
-  if (!knownZone(data.zone)) return NO_ZONE;
+  let zone: string | null = null;
+  let fallback: string | null = null;
+  if (knownZone(data.zone)) zone = data.zone;
+  else if (data.zone == null && data.source === "browser" && knownZone(data.fallback)) fallback = data.fallback;
+  else return NO_ZONE;
   const labels = (Array.isArray(data.labels) ? data.labels : [])
     .filter((l): l is { utc_offset_seconds: number; letters: string } =>
       !!l && typeof l === "object" && Number.isInteger((l as { utc_offset_seconds?: unknown }).utc_offset_seconds)
       && typeof (l as { letters?: unknown }).letters === "string"
       && LETTERS_RE.test((l as { letters: string }).letters))
     .map((l) => Object.freeze({ offset: l.utc_offset_seconds, letters: l.letters }));
-  return Object.freeze({ zone: data.zone, labels: Object.freeze(labels) });
+  if (fallback && !labels.length) return NO_ZONE;
+  return Object.freeze({ zone, fallback, labels: Object.freeze(labels) });
 }
 
 function sameZone(a: ViewerZone, b: ViewerZone): boolean {
-  return a.zone === b.zone && a.labels.length === b.labels.length
+  return a.zone === b.zone && (a.fallback || null) === (b.fallback || null)
+    && a.labels.length === b.labels.length
     && a.labels.every((l, i) => l.offset === b.labels[i].offset && l.letters === b.labels[i].letters);
 }
 
@@ -106,11 +123,14 @@ export function shownZone(info: ViewerZone = current): string {
 }
 
 const ISO_RE = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?)\s*(Z|UTC|[+-]\d{2}:?\d{2})?$/i;
+const DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
  * A moment from data: a Date, epoch seconds or milliseconds (a number under
  * 1e11 is seconds), or a string (ISO 8601; a date and time with no zone is
- * UTC). null when it is not a valid moment, or 0 or less.
+ * UTC). null when it is not a valid moment, or 0 or less. A calendar day with
+ * no time ("2026-11-12") is no moment: as UTC midnight it would show a day
+ * early west of UTC.
  */
 export function toDate(value: unknown): Date | null {
   if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
@@ -123,6 +143,7 @@ export function toDate(value: unknown): Date | null {
   const text = value.trim();
   if (!text) return null;
   if (/^\d+(?:\.\d+)?$/.test(text)) return toDate(Number(text));
+  if (DATE_ONLY_RE.test(text)) return null;
   const iso = ISO_RE.exec(text);
   if (iso) {
     let zone = (iso[3] || "Z").toUpperCase();
@@ -194,12 +215,16 @@ function intlLetters(date: Date, zone: string): string {
   return offsetLabel(zoneOffsetSeconds(date, zone));
 }
 
-/** How a time at *value* is named: the host's letters of the offset then, else the browser's short name. */
+/**
+ * How a time at *value* is named: the host's letters of the offset then (for
+ * the browser's zone, the letters the host gave for it), else the browser's
+ * short name.
+ */
 export function zoneLetters(value: unknown, info: ViewerZone = current): string {
   const date = toDate(value);
   if (!date) return "";
   const zone = shownZone(info);
-  if (info && info.zone === zone) {
+  if (info && (info.zone ? info.zone === zone : info.fallback === zone)) {
     const offset = zoneOffsetSeconds(date, zone);
     const hit = info.labels.find((l) => l.offset === offset);
     if (hit) return hit.letters;
@@ -243,18 +268,28 @@ export function dayKey(value: unknown, info: ViewerZone = current): string {
   return p ? `${p.year}-${two(p.month)}-${two(p.day)}` : "";
 }
 
-/** Read the zone once from *url* (same origin; the browser sends its own login); a failed read keeps the zone. */
+/** *url* with the browser's own zone as `fallback` (the host names that zone's letters when it knows no zone). */
+export function withFallback(url: string, fallback: string = browserZone()): string {
+  if (!knownZone(fallback)) return url;
+  return `${url}${url.includes("?") ? "&" : "?"}fallback=${encodeURIComponent(fallback)}`;
+}
+
+/**
+ * Read the zone once from *url* (same origin; the browser sends its own
+ * login), with the browser's zone as `fallback`; a failed read keeps the zone.
+ */
 export async function loadViewerZone(
   url: string,
   fetcher: (u: string) => Promise<{ ok: boolean; json: () => Promise<unknown> }> = (u) =>
     fetch(u, { credentials: "same-origin", headers: { Accept: "application/json" }, cache: "no-store" }),
 ): Promise<boolean> {
   try {
-    const res = await fetcher(url);
+    const fallback = browserZone();
+    const res = await fetcher(withFallback(url, fallback));
     if (!res.ok) return false;
     const body = (await res.json()) as { data?: unknown } | null;
     const data = body && typeof body === "object" && "data" in body ? body.data : body;
-    if (data && typeof data === "object") setViewerZone(data);
+    if (data && typeof data === "object") setViewerZone({ ...(data as Record<string, unknown>), fallback });
     return true;
   } catch {
     return false;

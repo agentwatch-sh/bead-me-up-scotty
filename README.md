@@ -292,17 +292,31 @@ named by its short name (`EST`, or `UTC-3` for a zone the browser names
 `GMT-3`).
 
 A host can name the zone: `SCOTTY_VIEWER_ZONE_URL` names a URL on the same
-origin (the browser sends its own login with the request). `GET <url>` answers
-`{"zone": "America/Argentina/Buenos_Aires" | null, "labels":
+origin (the browser sends its own login with the request). The board asks
+`GET <url>?fallback=<the browser's zone>` (Intl, for example
+`America/Buenos_Aires`), and the host answers `{"zone":
+"America/Argentina/Buenos_Aires" | null, "source": ..., "labels":
 [{"utc_offset_seconds": -10800, "letters": "ART"}]}`, bare or in a `data`
 envelope. A time takes the letters of the zone's offset at that time (`EST` in
 January and `EDT` in July for New York); an offset with no letters takes the
-browser's short name. A null zone, a failed read or no URL keeps the browser's
-zone. The page reads the URL at load and again every 15 minutes (and when it
-comes back into view after that long), so the zone follows a trip, and a change
-renders every time again. `lib/viewer-zone.ts` holds the rules;
-`scripts/test-viewer-zone.mjs` (the rules) and `scripts/test-viewer-zone-ui.mjs`
-(Playwright, 390x844; `SCOTTY_TEST_URL`) test it.
+browser's short name. With a null zone the host may answer `"source":
+"browser"` and the labels of the zone the board sent: the browser's zone then
+takes those letters, so Buenos Aires reads `ART`, never the browser's `GMT-3`.
+A null zone with no such labels, a failed read or no URL keeps the browser's
+zone and its short name. A calendar day with no time (`2026-11-12`) is not a
+moment and is never shown as one. The page reads the URL at load and again
+every 15 minutes (and when it comes back into view after that long), so the
+zone follows a trip, and a change renders every time again.
+`lib/viewer-zone.ts` holds the rules; `scripts/test-viewer-zone.mjs` (the
+rules) and `scripts/test-viewer-zone-ui.mjs` (Playwright, 390x844) test it.
+Both need Node 22.18+ (the rules import the TypeScript file natively):
+
+```bash
+npm run test:viewer-zone       # the rules; no server
+# The browser check, against a demo server (Playwright's Chromium, or SCOTTY_BROWSER_EXECUTABLE):
+npm run build && POSTHOG_KEY='' BEADS_DEMO=1 SCOTTY_READ_ONLY=1 npm run start -- --port 3198
+SCOTTY_TEST_URL=http://localhost:3198 npm run test:viewer-zone-ui
+```
 
 ### Opening Scotty by a hostname
 

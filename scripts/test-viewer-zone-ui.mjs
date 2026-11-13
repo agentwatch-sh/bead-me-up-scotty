@@ -13,6 +13,9 @@ const ZONE_URL = "/api/viewer/zone";
 const BUENOS_AIRES = { s: "ok", data: { zone: "America/Argentina/Buenos_Aires", source: "location", letters: ["ART"],
   labels: [{ utc_offset_seconds: -10800, letters: "ART" }] } };
 const NO_ZONE = { s: "ok", data: { zone: null, source: null, letters: [], labels: [] } };
+// The host knows no zone and names the browser's (?fallback=): agentwatch's answer for Buenos Aires.
+const BROWSER_BA = { s: "ok", data: { zone: null, source: "browser", letters: ["ART"],
+  labels: [{ utc_offset_seconds: -10800, letters: "ART" }] } };
 
 const bead = (id, title, extra = {}) => ({
   id, title, status: "open", issue_type: "task", priority: 2, labels: [], dependencies: [],
@@ -32,11 +35,12 @@ const errors = [];
 let zoneAnswer = BUENOS_AIRES;
 let zoneUrl = ZONE_URL;
 const asked = [];
+const fallbacks = [];
 
-async function phone() {
+async function phone(timezoneId = "America/New_York") {
   // The browser is in New York: the host's zone must win over it.
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, hasTouch: true,
-    isMobile: true, timezoneId: "America/New_York", locale: "en-US" });
+    isMobile: true, timezoneId, locale: "en-US" });
   const page = await context.newPage();
   page.setDefaultTimeout(10_000);
   page.on("pageerror", (error) => errors.push(error.message));
@@ -50,8 +54,9 @@ async function phone() {
     }
     return route.fulfill({ json: {} });
   });
-  await page.route(`**${ZONE_URL}`, (route) => {
+  await page.route((url) => url.pathname === ZONE_URL, (route) => {
     asked.push(route.request().method());
+    fallbacks.push(new URL(route.request().url()).searchParams.get("fallback"));
     return route.fulfill({ json: zoneAnswer });
   });
   return { context, page };
@@ -115,9 +120,25 @@ try {
     await context.close();
   }
 
+  // 4. The operator's case: no zone from the host, a browser in Buenos Aires. The board sends its zone and
+  //    takes the host's letters for it: ART, never the browser's GMT-3 ("UTC-3").
+  {
+    zoneAnswer = BROWSER_BA;
+    zoneUrl = ZONE_URL;
+    fallbacks.length = 0;
+    const { context, page } = await phone("America/Argentina/Buenos_Aires");
+    const { dialog } = await drawerTimes(page);
+    await dialog.getByText("Nov 12, 2026, 15:30 ART").waitFor();
+    const { times } = await drawerTimes(page);
+    assert.ok(!times.some((t) => /UTC-3/.test(t)), "never UTC-3");
+    assert.ok(fallbacks.length >= 1 && fallbacks.every((z) => /Buenos_Aires$/.test(z || "")), "the board sends its zone");
+    await context.close();
+  }
+
   assert.deepEqual(errors, []);
   console.log("PASS: viewer zone at 390x844: the host's zone named (ART) in the drawer, a comment and Needs You;"
-    + " typed text stays; a null zone or no URL uses the browser's zone (EST)");
+    + " typed text stays; a null zone or no URL uses the browser's zone (EST); a null zone in Buenos Aires"
+    + " reads ART by the host's letters for the browser's zone");
 } finally {
   await browser.close();
 }

@@ -22,7 +22,9 @@
     "build": "next build",
     "start": "next start",
     "serve": "node scripts/serve.mjs",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test:viewer-zone": "node scripts/test-viewer-zone.mjs",
+    "test:viewer-zone-ui": "node scripts/test-viewer-zone-ui.mjs"
   },
   "dependencies": {
     "@11ty/eleventy": "^3.1.6",
