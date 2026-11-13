@@ -6,7 +6,9 @@ import { HumanAnswer } from "@/components/human-answer";
 import { Icon } from "@/components/icons";
 import { api } from "@/lib/api-client";
 import { failureFor, keepsFailedCard } from "@/lib/answer-outbox";
-import { relTime, fmtDateTime } from "@/lib/beads-view";
+import { relTime } from "@/lib/beads-view";
+import { useViewerZone } from "@/hooks/use-viewer-zone";
+import { formatDateTime } from "@/lib/viewer-zone";
 import { parseChoice, parseChoices, parseDecline, parseGroup, parseQuestions, parseSelection } from "@/lib/human-choices";
 import { managerAnswer, needsReview, REVIEW_REASON_KEY } from "@/lib/review";
 import { useCommentReview } from "@/hooks/use-beads";
@@ -129,6 +131,7 @@ export function ToReviewView() {
 
 function ReviewRow({ bead, actor, disabled: bulkBusy, onHold }: { bead: Bead; actor: string; disabled: boolean; onHold: (id: string, on: boolean) => void }) {
   const { readOnly, openDetail, projectId } = useApp();
+  const zone = useViewerZone();
   const outbox = useAnswerOutbox();
   const entry = outbox.entry(bead.id);
   const comment = useCommentReview();
@@ -182,7 +185,7 @@ function ReviewRow({ bead, actor, disabled: bulkBusy, onHold }: { bead: Bead; ac
           {bead.id}
         </button>
         <span className="flex-1" />
-        <span title={fmtDateTime(bead.closed_at)} className="text-[11px] text-[var(--text-3)]">{relTime(bead.closed_at)}</span>
+        <span title={formatDateTime(bead.closed_at, zone)} className="text-[11px] text-[var(--text-3)]">{relTime(bead.closed_at)}</span>
       </div>
       <button type="button" onClick={() => openDetail(bead.id)} className="mb-2 block max-w-full break-words text-left text-[14px] font-[600] leading-snug hover:underline">
         {bead.title}
@@ -214,7 +217,7 @@ function ReviewRow({ bead, actor, disabled: bulkBusy, onHold }: { bead: Bead; ac
             <dd className="min-w-0 text-[var(--text-2)]">
               <ul data-review-comments={bead.id} className="flex flex-col gap-1">
                 {mine.map((c, i) => (
-                  <li key={c.id ?? i} title={fmtDateTime(c.created_at)} className="whitespace-pre-wrap break-words">{c.text}</li>
+                  <li key={c.id ?? i} title={formatDateTime(c.created_at, zone)} className="whitespace-pre-wrap break-words">{c.text}</li>
                 ))}
               </ul>
             </dd>

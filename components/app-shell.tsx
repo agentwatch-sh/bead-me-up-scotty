@@ -30,6 +30,7 @@ import { NotificationWatcher } from "@/components/notification-watcher";
 import { ReadOnlyBanner } from "@/components/read-only-banner";
 import { Sheet, SheetContent, SheetDescription, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { useViewerMode } from "@/hooks/use-viewer-mode";
+import { useViewerZoneLoader } from "@/hooks/use-viewer-zone";
 import { useNotificationActivation } from "@/hooks/use-notifications";
 import { Menu } from "lucide-react";
 
@@ -74,6 +75,8 @@ export function AppShell({ projectId }: { projectId: string }) {
   const index = React.useMemo(() => makeIndex(beads), [beads]);
   const viewerMode = useViewerMode();
   const readOnly = viewerMode.data?.readOnly ?? true;
+  // Every time on the board in the viewer's zone, named (agentwatch board age-65t).
+  useViewerZoneLoader(data?.meta?.viewerZoneUrl);
   // Preserve the requested link until a successful response establishes whether
   // the bead exists. A network error must not erase a valid bookmark.
   const loaded = !isLoading && !error && !!data;

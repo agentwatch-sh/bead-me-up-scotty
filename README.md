@@ -281,6 +281,29 @@ per 60 s per open page, and only at a render.
 `scripts/test-repo-refs.mjs` (the rules) and `scripts/test-repo-refs-ui.mjs`
 (Playwright, 390x844) test it.
 
+### Times in the viewer's zone
+
+Every time the board writes from data (created, updated and closed in the
+item drawer, comment times, the times behind "3d ago" in the List, Focus,
+Activity, Needs You and To Review) shows in one zone, with the zone named:
+`Nov 12, 2026, 15:30 ART`. A relative time ("3d ago") stays as it is, and text
+that someone typed stays as typed. By default the zone is the browser's own,
+named by its short name (`EST`, or `UTC-3` for a zone the browser names
+`GMT-3`).
+
+A host can name the zone: `SCOTTY_VIEWER_ZONE_URL` names a URL on the same
+origin (the browser sends its own login with the request). `GET <url>` answers
+`{"zone": "America/Argentina/Buenos_Aires" | null, "labels":
+[{"utc_offset_seconds": -10800, "letters": "ART"}]}`, bare or in a `data`
+envelope. A time takes the letters of the zone's offset at that time (`EST` in
+January and `EDT` in July for New York); an offset with no letters takes the
+browser's short name. A null zone, a failed read or no URL keeps the browser's
+zone. The page reads the URL at load and again every 15 minutes (and when it
+comes back into view after that long), so the zone follows a trip, and a change
+renders every time again. `lib/viewer-zone.ts` holds the rules;
+`scripts/test-viewer-zone.mjs` (the rules) and `scripts/test-viewer-zone-ui.mjs`
+(Playwright, 390x844; `SCOTTY_TEST_URL`) test it.
+
 ### Opening Scotty by a hostname
 
 Scotty only answers browsers that address it as `localhost` (or `*.localhost`)

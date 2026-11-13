@@ -18,6 +18,8 @@ import { CopyableId } from "@/components/copyable-id";
 import { useApp, type DetailAction } from "@/components/app-context";
 import { useImageDrop } from "@/hooks/use-image-drop";
 import { useResizableWidth } from "@/hooks/use-resizable-width";
+import { useViewerZone } from "@/hooks/use-viewer-zone";
+import { formatDateTime } from "@/lib/viewer-zone";
 import { DescriptionContent } from "@/components/description-content";
 import { MarkdownToolbar, applyTransform } from "@/components/markdown-toolbar";
 import { bold, italic, link } from "@/lib/markdown-edit";
@@ -46,8 +48,6 @@ import {
   epicProgress,
   isHumanGate,
   relTime,
-  fmtDate,
-  fmtDateTime,
   checklistProgress,
   toggleTask,
   closeReasonOf,
@@ -217,6 +217,7 @@ function DrawerBody({
 }) {
   const { index, beads, humanAllowlist, meta, projectId, pushDetail, openCreate, readOnly } =
     useApp();
+  const zone = useViewerZone();
   const actor = meta?.humanActor ?? "you";
   const isDemo = meta?.kind === "demo";
   const outbox = useAnswerOutbox();
@@ -388,9 +389,9 @@ function DrawerBody({
   const closeReason = closeReasonOf(bead);
   const comments = bead.comments ?? [];
   const activity = [
-    { label: `Created by ${bead.created_by || "unknown"}`, time: fmtDate(bead.created_at) },
-    bead.updated_at ? { label: "Last updated", time: fmtDate(bead.updated_at) } : null,
-    bead.closed_at ? { label: "Closed", time: fmtDate(bead.closed_at) } : null,
+    { label: `Created by ${bead.created_by || "unknown"}`, time: formatDateTime(bead.created_at, zone) },
+    bead.updated_at ? { label: "Last updated", time: formatDateTime(bead.updated_at, zone) } : null,
+    bead.closed_at ? { label: "Closed", time: formatDateTime(bead.closed_at, zone) } : null,
   ].filter(Boolean) as { label: string; time: string }[];
 
   // Every label already in use across the project, offered as datalist
@@ -1032,7 +1033,7 @@ function DrawerBody({
                     <div className="mb-[3px] flex items-center gap-[7px]">
                       <span className="text-[12.5px] font-semibold">{c.author}</span>
                       <OriginBadge origin={co} title={co === "human" ? "Human" : "Agent"} />
-                      <span title={fmtDateTime(c.created_at)} className="text-[11px] text-[var(--text-3)]">
+                      <span title={formatDateTime(c.created_at, zone)} className="text-[11px] text-[var(--text-3)]">
                         {relTime(c.created_at)}
                       </span>
                     </div>

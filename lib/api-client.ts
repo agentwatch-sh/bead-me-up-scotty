@@ -18,6 +18,8 @@ export interface Meta {
   lanePrefix?: string | null;
   /** The repo references provider of this project (SCOTTY_REPO_REFS_URL), or null. */
   repoRefsUrl?: string | null;
+  /** The URL of the viewer's zone (SCOTTY_VIEWER_ZONE_URL, lib/viewer-zone.ts), or null: the browser's zone. */
+  viewerZoneUrl?: string | null;
 }
 export interface BeadsResponse {
   beads: Bead[];

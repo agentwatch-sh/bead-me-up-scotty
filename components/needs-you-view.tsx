@@ -15,9 +15,10 @@ import {
   gateBlocks,
   typeColor,
   relTime,
-  fmtDateTime,
 } from "@/lib/beads-view";
 import { reviewLinks } from "@/lib/review-links";
+import { useViewerZone } from "@/hooks/use-viewer-zone";
+import { formatDateTime } from "@/lib/viewer-zone";
 import { api } from "@/lib/api-client";
 import { DescriptionContent } from "@/components/description-content";
 import type { Bead } from "@/lib/schema";
@@ -131,6 +132,7 @@ function ReviewLinks({ bead }: { bead: Bead }) {
  */
 function GateCard({ gate }: { gate: Bead }) {
   const { beads, openDetail, selectedBeadId, selectBead } = useApp();
+  const zone = useViewerZone();
   const blocks = React.useMemo(() => gateBlocks(gate.id, beads), [gate.id, beads]);
 
   return (
@@ -158,7 +160,7 @@ function GateCard({ gate }: { gate: Bead }) {
           Approval gate
         </span>
         <span className="flex-1" />
-        <span title={fmtDateTime(gate.updated_at)} className="text-[11px] text-[var(--text-3)]">
+        <span title={formatDateTime(gate.updated_at, zone)} className="text-[11px] text-[var(--text-3)]">
           {relTime(gate.updated_at)}
         </span>
       </div>
@@ -196,6 +198,7 @@ function GateCard({ gate }: { gate: Bead }) {
 
 function NeedsYouCard({ bead }: { bead: Bead }) {
   const { humanAllowlist, openDetail, selectedBeadId, selectBead } = useApp();
+  const zone = useViewerZone();
   const o = beadOrigin(bead, humanAllowlist);
 
   return (
@@ -221,7 +224,7 @@ function NeedsYouCard({ bead }: { bead: Bead }) {
         </button>
         <OriginBadge origin={o} title={o === "human" ? "Human" : "Agent"} />
         <span className="flex-1" />
-        <span title={fmtDateTime(bead.updated_at)} className="text-[11px] text-[var(--text-3)]">
+        <span title={formatDateTime(bead.updated_at, zone)} className="text-[11px] text-[var(--text-3)]">
           {relTime(bead.updated_at)}
         </span>
       </div>

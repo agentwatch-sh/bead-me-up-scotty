@@ -120,6 +120,19 @@ export function repoRefsUrl(projectId: string, kind: string): string | null {
   return url.startsWith("/") && !url.startsWith("//") && !url.includes("\\") ? url : null;
 }
 
+/**
+ * The viewer's zone (agentwatch board age-65t): SCOTTY_VIEWER_ZONE_URL names
+ * the URL that answers the zone every time on the board is shown in, and its
+ * letters (lib/viewer-zone.ts). Only a path on this origin is used (the
+ * browser sends its own login with the request); anything else, or no
+ * variable, gives null, and the board uses the browser's own zone.
+ */
+export function viewerZoneUrl(): string | null {
+  const url = process.env.SCOTTY_VIEWER_ZONE_URL;
+  if (!url) return null;
+  return url.startsWith("/") && !url.startsWith("//") && !url.includes("\\") ? url : null;
+}
+
 function configDir(): string {
   const base = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config");
   return path.join(base, "bead-me-up-scotty");

@@ -3,7 +3,9 @@ import * as React from "react";
 import { useApp } from "@/components/app-context";
 import { Icon, typeIconName } from "@/components/icons";
 import { PriorityChip } from "@/components/board/bead-card";
-import { isBlocked, isItem, blockingDeps, relTime, fmtDateTime, typeColor, catColor } from "@/lib/beads-view";
+import { isBlocked, isItem, blockingDeps, relTime, typeColor, catColor } from "@/lib/beads-view";
+import { useViewerZone } from "@/hooks/use-viewer-zone";
+import { formatDateTime } from "@/lib/viewer-zone";
 import type { Bead } from "@/lib/schema";
 
 /**
@@ -265,6 +267,7 @@ function LaneChip({
 
 function FocusCard({ bead, showBlockers }: { bead: Bead; showBlockers?: boolean }) {
   const { index, openDetail, selectedBeadId, selectBead } = useApp();
+  const zone = useViewerZone();
   const blockers = showBlockers ? blockingDeps(bead, index) : [];
   const timestamp = bead.status === "closed" ? completionDate(bead) : bead.updated_at;
   return (
@@ -307,7 +310,7 @@ function FocusCard({ bead, showBlockers }: { bead: Bead; showBlockers?: boolean 
         {bead.title}
       </div>
       <div className="mt-[6px] flex items-center gap-[8px] text-[10.5px] text-[var(--text-3)]">
-        <span title={fmtDateTime(timestamp)}>{relTime(timestamp)}</span>
+        <span title={formatDateTime(timestamp, zone)}>{relTime(timestamp)}</span>
         {blockers.length > 0 && (
           <span className="truncate font-mono" title={`blocked by ${blockers.join(", ")}`}>
             ⛔ {blockers.join(", ")}

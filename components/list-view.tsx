@@ -23,6 +23,8 @@ import { FilterBar } from "@/components/filter-bar";
 import { useOrder, useSetOrder } from "@/hooks/use-order";
 import { useSetStatus } from "@/hooks/use-beads";
 import { useUrlFilters } from "@/hooks/use-url-filters";
+import { useViewerZone } from "@/hooks/use-viewer-zone";
+import { formatDateTime } from "@/lib/viewer-zone";
 import { matchesFilters, labelOptionsFrom, assigneeOptionsFrom } from "@/lib/filters";
 import { BOARD_COLUMNS, COLUMN_ORDER, colOf } from "@/lib/board-columns";
 import { beadOrigin, originTitle } from "@/lib/attribution";
@@ -38,7 +40,6 @@ import {
   parentOf,
   childrenCountMap,
   relTime,
-  fmtDateTime,
 } from "@/lib/beads-view";
 import { type Bead } from "@/lib/schema";
 
@@ -316,6 +317,7 @@ function Row({
   humanAllowlist: string[];
 }) {
   const { readOnly, selectedBeadId, selectBead } = useApp();
+  const zone = useViewerZone();
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: bead.id,
     disabled: readOnly || item,
@@ -446,7 +448,7 @@ function Row({
         </span>
       </span>
       <span
-        title={fmtDateTime(bead.updated_at)}
+        title={formatDateTime(bead.updated_at, zone)}
         className="hidden w-[64px] flex-shrink-0 text-right font-mono text-[11px] text-[var(--text-3)] xl:inline"
       >
         {relTime(bead.updated_at)}

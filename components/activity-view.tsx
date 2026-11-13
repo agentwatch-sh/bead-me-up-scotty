@@ -4,7 +4,9 @@ import { useApp } from "@/components/app-context";
 import { useActivity } from "@/hooks/use-beads";
 import { OriginBadge } from "@/components/board/bead-card";
 import { Icon } from "@/components/icons";
-import { avatarColor, initials, relTime, fmtDateTime } from "@/lib/beads-view";
+import { avatarColor, initials, relTime } from "@/lib/beads-view";
+import { useViewerZone } from "@/hooks/use-viewer-zone";
+import { formatDateTime } from "@/lib/viewer-zone";
 
 /**
  * Mission Control — live activity feed. A newest-first stream of what humans and
@@ -14,6 +16,7 @@ import { avatarColor, initials, relTime, fmtDateTime } from "@/lib/beads-view";
  */
 export function ActivityView() {
   const { projectId, openDetail, selectedBeadId, selectBead } = useApp();
+  const zone = useViewerZone();
   const { data, isLoading } = useActivity(projectId);
   const items = data?.items ?? [];
 
@@ -66,7 +69,7 @@ export function ActivityView() {
                     )}
                   </div>
                   <span
-                    title={fmtDateTime(it.at)}
+                    title={formatDateTime(it.at, zone)}
                     className="flex-shrink-0 whitespace-nowrap text-[11px] text-[var(--text-3)]"
                   >
                     {relTime(it.at)}
