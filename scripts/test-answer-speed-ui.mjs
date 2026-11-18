@@ -219,7 +219,7 @@ try {
       ["the board says the question is stale (409)", (route) => route.fulfill({ status: 409, json: { error: "This question is no longer waiting for an answer.", code: "stale_question" } }), /no longer waiting for an answer/],
       ["the proxy answers 409 with its login chooser page", (route) => route.fulfill({ status: 409, contentType: "text/html", body: "<html>Choose a board</html>" }), /Request failed \(409\)/],
       ["the connection drops", (route) => route.abort("failed"), /did not reach the board: the connection failed/],
-      ["the request hangs", () => {}, /did not answer within 30 s/],
+      ["the request hangs", () => {}, /did not answer within 90 s/],
     ];
     for (const [name, answerWith, expected] of cases) {
       const item = create(`Refused: ${name}?`, null);
@@ -234,7 +234,8 @@ try {
       });
       const ms = await leaves(panel, () => panel.getByRole("button", { name: "Respond", exact: true }).click());
       assert.ok(ms < 1000, `${name}: the card left ${ms} ms after the click`);
-      await panelOf(item).getByRole("alert").waitFor({ timeout: 45000 });
+      // The page waits up to 90 s for the board (age-7uad).
+      await panelOf(item).getByRole("alert").waitFor({ timeout: 120000 });
       assert.match(await panelOf(item).getByRole("alert").innerText(), expected, name);
       assert.equal(await panelOf(item).getByRole("textbox", { name: "Write an answer" }).inputValue(), typed, `${name}: the typed text is back`);
       assert.equal(mine(item).length, 0, `${name}: nothing was written`);
@@ -247,7 +248,7 @@ try {
     console.log("PASS answer speed: a 403, a 409 (JSON and HTML), a dropped connection and a hung request bring the card back with its error and the typed text; an edit clears the error");
   }
 
-  // ---- The board wrote the answer, but its response was lost: the neutral words, never "sent" (re-check rv-6mk-d) ----
+  // ---- The board wrote the answer, but its response was lost: the item holds this answer, so it is recorded (age-7uad) ----
   {
     const typed = "Ship it.";
     const item = create("Lost response?", null);
@@ -258,16 +259,64 @@ try {
       await route.abort("failed"); // and the page never hears it
     });
     await leaves(panel, () => panel.getByRole("button", { name: "Respond", exact: true }).click());
+    // The item, read again with its comments, holds the operator's own answer: the confirmation, no warning.
+    await toast(`Responded to ${item}`).waitFor();
+    await painted();
+    assert.equal(await panelOf(item).count(), 0, "the card stays out, as after a 2xx");
+    assert.equal(await page.getByText(CLOSED_NOW).count(), 0, "no neutral words");
+    await page.unroute(`**/beads/${item}/human`);
+    assert.equal(show(item).close_reason, "Responded");
+    assert.equal(mine(item).length, 1);
+    console.log("PASS answer speed: a lost response on an item closed with this very answer is confirmed, with no warning");
+  }
+
+  // ---- The same for a group of questions (version 2): every answer is compared (age-7uad) ----
+  {
+    const questions = ["Theme", "Format"].map((header, i) => ({ id: `q${i + 1}`, question: `Choose ${header.toLowerCase()} again?`, header, multiSelect: false, options: [green, blue] }));
+    const item = create("Two questions, lost response?", { version: 2, questions });
+    const panel = await visit(item);
+    await panel.locator('[data-question-id="q1"]').getByRole("button", { name: /^Use green/ }).click();
+    await panel.getByRole("textbox", { name: "Answer for Theme" }).fill("Keep the logo.");
+    await panel.locator('[data-question-id="q2"]').getByRole("button", { name: /Use blue/ }).click();
+    await page.route(`**/beads/${item}/human`, async (route) => {
+      await route.fetch();
+      await route.abort("failed");
+    });
+    await leaves(panel, () => panel.getByRole("button", { name: "Respond", exact: true }).click());
+    await toast(`Answered ${item}`).waitFor();
+    await painted();
+    assert.equal(await panelOf(item).count(), 0);
+    assert.equal(await page.getByText(CLOSED_NOW).count(), 0);
+    await page.unroute(`**/beads/${item}/human`);
+    assert.equal(show(item).close_reason, "Responded");
+    assert.equal(mine(item).length, 1);
+    console.log("PASS answer speed: a lost response on a group closed with these very answers is confirmed");
+  }
+
+  // ---- The operator's answer lands, then a manager's different answer is the one recorded: the neutral words (age-7uad) ----
+  {
+    const typed = "Ship it on Monday.";
+    const item = create("Answered over?", null);
+    const panel = await visit(item);
+    await panel.getByRole("textbox", { name: "Write an answer" }).fill(typed);
+    await page.route(`**/beads/${item}/human`, async (route) => {
+      await route.fetch(); // the operator's answer: comment, this click's mark, close
+      // A manager answers again before the page hears: the item's answer is the manager's now.
+      await runAsync(MANAGER, ["reopen", item]);
+      await runAsync(MANAGER, ["comment", item, "Ship it on Friday."]);
+      await runAsync(MANAGER, ["close", item, "--reason", "Responded"]);
+      await route.abort("failed");
+    });
+    await leaves(panel, () => panel.getByRole("button", { name: "Respond", exact: true }).click());
     await panelOf(item).getByRole("alert").waitFor();
     assert.equal(await panelOf(item).getByRole("alert").innerText(), CLOSED_NOW);
     assert.equal(await panelOf(item).getByRole("textbox", { name: "Write an answer" }).inputValue(), typed, "the typed text is back");
-    assert.equal(await toast(`Responded to ${item}`).count(), 0, "a closed item never reads as sent after a failure");
+    assert.equal(await toast(`Responded to ${item}`).count(), 0, "another answer recorded never reads as sent");
+    assert.equal(show(item).metadata["scotty.answer_click"] !== undefined, true, "the item carries this click's mark");
     await page.unroute(`**/beads/${item}/human`);
     await page.locator(`[data-closed-meanwhile="${item}"]`).getByRole("button", { name: "OK", exact: true }).click();
     await panelOf(item).waitFor({ state: "detached" });
-    assert.equal(show(item).close_reason, "Responded");
-    assert.equal(mine(item).length, 1);
-    console.log("PASS answer speed: a lost response on an item now closed gives the neutral words and the typed text, never \"sent\"");
+    console.log("PASS answer speed: a closed item whose recorded answer is another one keeps the neutral words, with the typed text");
   }
 
   // ---- The same item reopened and answered again with the same words: a new click, written (re-check rv-6mk-e, Minor 7) ----
@@ -281,10 +330,10 @@ try {
       await route.abort("failed");
     });
     await leaves(panel, () => panel.getByRole("button", { name: "Respond", exact: true }).click());
-    await panelOf(item).getByRole("alert").filter({ hasText: CLOSED_NOW }).waitFor();
+    // The item holds this answer: confirmed (age-7uad).
+    await toast(`Responded to ${item}`).waitFor();
     await page.unroute(`**/beads/${item}/human`);
-    await page.locator(`[data-closed-meanwhile="${item}"]`).getByRole("button", { name: "OK", exact: true }).click();
-    await panelOf(item).waitFor({ state: "detached" });
+    await toast(`Responded to ${item}`).waitFor({ state: "detached", timeout: 15000 });
     // The agent reopens the item and asks again; the page (not reloaded) shows it, and the
     // operator gives the same words: the board writes them, as a new answer.
     run("agent:test", ["reopen", item]);
@@ -294,7 +343,7 @@ try {
     await panelOf(item).getByRole("button", { name: "Respond", exact: true }).click();
     await toast(`Responded to ${item}`).waitFor();
     assert.equal(mine(item).length, 2, "the second answer is written: its click is new");
-    console.log("PASS answer speed: after a closed-now card, the same words on the reopened item are a new click and are written");
+    console.log("PASS answer speed: after a confirmed lost response, the same words on the reopened item are a new click and are written");
   }
 
   // ---- The request fails while a manager answers the item: never "sent" (re-check Important 1) ----
@@ -418,31 +467,82 @@ try {
     console.log("PASS answer speed: a click on a stale card after a manager's close is refused as stale, with nothing written");
   }
 
-  // ---- The board's own bd is slower than the page's 30 s (re-check Minor 1, Minor 3) ----
+  // ---- A board slower than the old 30 s limit: the page waits up to 90 s, sending meanwhile (age-7uad) ----
   {
     const typed = "Ship it when it is ready.";
     const item = create("A slow board?", null);
     const panel = await visit(item);
     await panel.getByRole("textbox", { name: "Write an answer" }).fill(typed);
     slow("close", 45);
+    const start = Date.now();
     await leaves(panel, () => panel.getByRole("button", { name: "Respond", exact: true }).click());
-    // The page gives up after 30 s; the re-read waits behind the slow close and gives up too.
-    await panelOf(item).getByRole("alert").waitFor({ timeout: 60000 });
-    assert.equal(await panelOf(item).getByRole("alert").innerText(),
-      "The board did not answer within 30 s; your answer may still be saved: check the item before answering again.");
-    assert.equal(await panelOf(item).getByRole("textbox", { name: "Write an answer" }).inputValue(), typed);
-    // The board finishes the write: the next list shows the item closed, the page reads it again
-    // and takes the neutral words, with the typed text; it never counts the answer as sent.
-    await page.waitForFunction(([id, words]) => document.querySelector(`[data-human-answer="${id}"] [role="alert"]`)?.textContent === words,
-      [item, CLOSED_NOW], { timeout: 60000 });
-    assert.equal(await panelOf(item).getByRole("textbox", { name: "Write an answer" }).inputValue(), typed);
-    assert.equal(await toast(`Responded to ${item}`).count(), 0);
-    await page.locator(`[data-closed-meanwhile="${item}"]`).getByRole("button", { name: "OK", exact: true }).click();
-    await panelOf(item).waitFor({ state: "detached" });
+    // Past the old 30 s, the page still says it is sending, and no card has come back.
+    await new Promise((done) => setTimeout(done, Math.max(0, 35000 - (Date.now() - start))));
+    assert.equal(await toast(`Sending your answer to ${item}…`).count(), 1, "still sending after 35 s");
+    assert.equal(await panelOf(item).count(), 0, "no card back after 35 s");
+    // The board answers after about 45 s: the confirmation, no warning.
+    await toast(`Responded to ${item}`).waitFor({ timeout: 60000 });
+    assert.ok(Date.now() - start >= 44000, `the 2xx came after the slow close (${Date.now() - start} ms)`);
+    await painted();
+    assert.equal(await panelOf(item).count(), 0);
+    assert.equal(await page.getByText(CLOSED_NOW).count(), 0);
     fast("close");
     assert.equal(show(item).close_reason, "Responded");
     assert.equal(mine(item).length, 1);
-    console.log("PASS answer speed: a board slower than 30 s: the card comes back saying the answer may still be saved, then the neutral words when the item closes");
+    console.log("PASS answer speed: a board that takes 45 s: the page says it is sending past 30 s, then confirms the answer with no warning");
+  }
+
+  // ---- The response comes later than the page's 90 s: the item holds this answer, so it is recorded (age-7uad) ----
+  {
+    const typed = "Ship it after the review.";
+    const item = create("A response slower than the page?", null);
+    const panel = await visit(item);
+    await panel.getByRole("textbox", { name: "Write an answer" }).fill(typed);
+    const held = [];
+    await page.route(`**/beads/${item}/human`, async (route) => {
+      await route.fetch(); // the board writes the answer at once
+      held.push(route); // and its response never reaches the page
+    });
+    const start = Date.now();
+    await leaves(panel, () => panel.getByRole("button", { name: "Respond", exact: true }).click());
+    await toast(`Responded to ${item}`).waitFor({ timeout: 120000 });
+    assert.ok(Date.now() - start >= 89000, `the confirmation came after the page's time limit (${Date.now() - start} ms)`);
+    await painted();
+    assert.equal(await panelOf(item).count(), 0);
+    assert.equal(await page.getByText(CLOSED_NOW).count(), 0);
+    assert.equal(await page.getByText(/did not answer within/).count(), 0, "no time-limit words");
+    await page.unroute(`**/beads/${item}/human`);
+    for (const route of held) await route.abort().catch(() => {});
+    assert.equal(show(item).close_reason, "Responded");
+    assert.equal(mine(item).length, 1);
+    console.log("PASS answer speed: a response later than 90 s on an item closed with this very answer is confirmed, with no warning");
+  }
+
+  // ---- The board is slower than the page's 90 s: the card comes back, then the closed item holds this answer: recorded (age-7uad) ----
+  {
+    const typed = "Ship it when the board is done.";
+    const item = create("A board slower than the page?", null);
+    const panel = await visit(item);
+    await panel.getByRole("textbox", { name: "Write an answer" }).fill(typed);
+    // Two slow steps, each under bd's own 60 s limit: the slot takes about 110 s.
+    slow("comment", 55);
+    slow("close", 55);
+    await leaves(panel, () => panel.getByRole("button", { name: "Respond", exact: true }).click());
+    // The page gives up after 90 s; the re-read waits behind the slow slot and gives up too.
+    await panelOf(item).getByRole("alert").waitFor({ timeout: 120000 });
+    assert.equal(await panelOf(item).getByRole("alert").innerText(),
+      "The board did not answer within 90 s; your answer may still be saved: check the item before answering again.");
+    assert.equal(await panelOf(item).getByRole("textbox", { name: "Write an answer" }).inputValue(), typed);
+    fast("comment");
+    fast("close");
+    // The board finishes the write: the next list shows the item closed, the page reads it with its
+    // comments, finds this very answer, and confirms it; the card goes.
+    await toast(`Responded to ${item}`).waitFor({ timeout: 90000 });
+    await panelOf(item).waitFor({ state: "detached", timeout: 30000 });
+    assert.equal(await page.getByText(CLOSED_NOW).count(), 0);
+    assert.equal(show(item).close_reason, "Responded");
+    assert.equal(mine(item).length, 1);
+    console.log("PASS answer speed: a board slower than 90 s: the card comes back saying the answer may still be saved, then the confirmation when the item closes with this answer");
   }
 
   // ---- The detail drawer: the form gives way to "Sending your answer…" ----
@@ -579,5 +679,5 @@ try {
   assert.deepEqual(errors, []);
 } finally {
   await browser.close();
-  for (const command of ["close", "update"]) fast(command);
+  for (const command of ["close", "update", "comment"]) fast(command);
 }

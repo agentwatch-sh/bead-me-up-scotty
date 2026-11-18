@@ -10,9 +10,9 @@ import { api, type BeadsResponse } from "@/lib/api-client";
 import type { HumanBody } from "@/lib/human-validate";
 import type { Bead } from "@/lib/schema";
 import {
-  ANSWER_TIMEOUT_MS, CLOSED_NOW_TEXT, SAVED_TEXT, afterFailure, clickIdFor, failureText, isHidden, mayHaveLanded, needsRecheck, newClickId,
+  ANSWER_TIMEOUT_MS, CLOSED_NOW_TEXT, SAVED_TEXT, afterFailure, clickIdFor, failureText, holdsAnswer, isHidden, mayHaveLanded, needsRecheck, newClickId,
   outboxAfter, outboxKey, outboxText,
-  patchAnswered, recheckStillCurrent, type Outbox, type OutboxEntry, type OutboxEvent, type OutboxKind, type SentAnswer,
+  patchAnswered, recheckStillCurrent, type AnswerRecord, type Outbox, type OutboxEntry, type OutboxEvent, type OutboxKind, type SentAnswer,
 } from "@/lib/answer-outbox";
 
 /** Where an answer goes instead of the human route (To Review sends a Reverse). */
@@ -38,6 +38,13 @@ export interface OutboxSend {
   draft?: unknown;
   /** A 2xx that still needs the operator: a warning instead of the confirmation. */
   warning?: (body: unknown) => string | null;
+  /**
+   * What the human route writes for this answer (`answerRecord`). With it, an
+   * item found closed after a time limit or a lost response that holds this
+   * answer (`holdsAnswer`) is confirmed as sent, not the neutral case (age-7uad).
+   * A route (a Reverse, an Accept) has none.
+   */
+  record?: AnswerRecord;
 }
 
 interface OutboxApi {
@@ -57,6 +64,8 @@ const OutboxContext = React.createContext<OutboxApi | null>(null);
 
 /** How long the page waits for the item's state after a failure that may have been written. */
 const REREAD_TIMEOUT_MS = 10_000;
+/** How long the page waits for the list (the item with its comments) to compare the answer it recorded (age-7uad). */
+const RECORD_READ_TIMEOUT_MS = 30_000;
 
 type Attempt = { item: OutboxSend; sent: SentAnswer };
 
@@ -87,6 +96,22 @@ export function AnswerOutboxProvider({ projectId, listStartedAt, children }: {
   const reread = React.useCallback(async (item: OutboxSend): Promise<Bead | null> => {
     try {
       return await api.get(projectId, item.id, AbortSignal.timeout(REREAD_TIMEOUT_MS));
+    } catch {
+      return null;
+    }
+  }, [projectId]);
+
+  /**
+   * The item read with its comments, when it holds this answer (`holdsAnswer`);
+   * else null, also when it cannot be read. `bd show` leaves the comments out,
+   * so this reads the list, which has them and the operator's actor (age-7uad).
+   */
+  const recorded = React.useCallback(async (item: OutboxSend, sent: SentAnswer): Promise<Bead | null> => {
+    if (!item.record) return null;
+    try {
+      const list = await api.list(projectId, AbortSignal.timeout(RECORD_READ_TIMEOUT_MS));
+      const bead = list.beads.find((b) => b.id === item.id);
+      return bead && holdsAnswer(bead, item.record, sent, list.meta?.humanActor) ? bead : null;
     } catch {
       return null;
     }
@@ -139,6 +164,13 @@ export function AnswerOutboxProvider({ projectId, listStartedAt, children }: {
           const outcome = afterFailure(item.kind, found, attempt.sent);
           if (outcome === "saved") message = SAVED_TEXT;
           if (outcome === "closed") {
+            // Closed now: when the item holds this very answer, it was sent (age-7uad):
+            // the confirmation, as after a 2xx. Else, or unreadable, the neutral words.
+            const holding = await recorded(item, attempt.sent);
+            if (holding) {
+              confirm(key, item, holding);
+              return true;
+            }
             message = CLOSED_NOW_TEXT;
             uncertain = false;
             closedNow = true;
@@ -156,29 +188,38 @@ export function AnswerOutboxProvider({ projectId, listStartedAt, children }: {
     } finally {
       void qc.invalidateQueries({ queryKey: beadsKey(projectId) });
     }
-  }, [apply, confirm, patch, projectId, qc, reread]);
+  }, [apply, confirm, patch, projectId, qc, recorded, reread]);
 
   // An uncertain failure (the page gave up, the board may still write): when the
   // board settles the item, the card takes the neutral words (closed now, by
-  // anyone); it never becomes "sent". A check acts only when its try is still the
-  // item's latest and the item still failed and uncertain.
+  // anyone), or, when the item holds this very answer, the confirmation (age-7uad).
+  // A check acts only when its try is still the item's latest and the item still
+  // failed and uncertain.
   React.useEffect(() => {
     for (const bead of beads) {
       const key = outboxKey(projectId, bead.id);
       const attempt = attempts.current.get(key);
       if (!attempt || rechecking.current.has(key) || !needsRecheck(box[key], bead)) continue;
       rechecking.current.add(key);
-      void reread(attempt.item).then((found) => {
+      void reread(attempt.item).then(async (found) => {
         if (!found || !recheckStillCurrent(attempts.current.get(key), attempt, boxNow.current[key])) return;
         patch(found);
-        if (afterFailure(attempt.item.kind, found, attempt.sent) === "closed") {
-          // Closed now: its try goes too, so a later answer on a reopened item is a new click.
-          attempts.current.delete(key);
+        if (afterFailure(attempt.item.kind, found, attempt.sent) !== "closed") return;
+        const holding = await recorded(attempt.item, attempt.sent);
+        // The operator may have sent again, or dealt with the failure, while the list was read.
+        if (!recheckStillCurrent(attempts.current.get(key), attempt, boxNow.current[key])) return;
+        // Closed now: its try goes too, so a later answer on a reopened item is a new click.
+        attempts.current.delete(key);
+        if (!holding) {
           apply({ type: "closedNow", id: key });
+          return;
         }
+        apply({ type: "recorded", id: key, at: Date.now() });
+        patch(holding);
+        toast.success(outboxText(attempt.item.kind, attempt.item.id).done, { id: `outbox-${key}` });
       }).finally(() => rechecking.current.delete(key));
     }
-  }, [apply, beads, box, patch, projectId, reread]);
+  }, [apply, beads, box, patch, projectId, recorded, reread]);
 
   const api_ = React.useMemo<OutboxApi>(() => ({
     hidden: (id) => isHidden(box[outboxKey(projectId, id)], listStartedAt),

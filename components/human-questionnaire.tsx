@@ -3,7 +3,7 @@ import * as React from "react";
 import { useApp } from "@/components/app-context";
 import { ClosedMeanwhile, failedDraft, useAnswerOutbox, type AnswerRoute } from "@/components/answer-outbox";
 import { api, humanBody } from "@/lib/api-client";
-import { HUMAN_KINDS, failureFor } from "@/lib/answer-outbox";
+import { HUMAN_KINDS, answerRecord, failureFor } from "@/lib/answer-outbox";
 import { DescriptionContent } from "@/components/description-content";
 import type { Bead } from "@/lib/schema";
 import type { HumanChoice, HumanQuestion, QuestionAnswer } from "@/lib/human-choices";
@@ -41,6 +41,8 @@ export function HumanQuestionnaire({ bead, initialQuestions, route, disabled: he
       fingerprint: JSON.stringify(body),
       draft: drafts,
       warning: route?.warning,
+      // What the human route writes: a closed item that holds it is this answer, sent (age-7uad).
+      record: route ? undefined : answerRecord(body),
     });
   };
   const disabled = readOnly || !!held || entry?.state === "sending" || (!route && bead.status === "closed") || !!failed?.closedNow;

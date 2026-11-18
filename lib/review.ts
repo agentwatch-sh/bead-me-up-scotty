@@ -24,7 +24,7 @@ function isAnswerAuthor(author: string, humanActor: string): boolean {
  * `closed_at`) is not an answer. A comment whose time does not parse keeps its
  * place in the list order, as in agentwatch.
  */
-function latestAnswer(bead: Bead, humanActor: string): Answer | null {
+export function latestAnswer(bead: Pick<Bead, "comments" | "closed_at">, humanActor: string): Answer | null {
   const closedAt = bead.closed_at ? Date.parse(bead.closed_at) : NaN;
   let best: Answer | null = null;
   let bestAt = -Infinity;

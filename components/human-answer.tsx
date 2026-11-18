@@ -4,7 +4,7 @@ import { HumanQuestionnaire } from "@/components/human-questionnaire";
 import { useApp } from "@/components/app-context";
 import { Icon } from "@/components/icons";
 import { ClosedMeanwhile, failedDraft, useAnswerOutbox, type AnswerRoute } from "@/components/answer-outbox";
-import { HUMAN_KINDS, failureFor, type OutboxKind } from "@/lib/answer-outbox";
+import { HUMAN_KINDS, answerRecord, failureFor, type OutboxKind } from "@/lib/answer-outbox";
 import { api, humanBody } from "@/lib/api-client";
 import { parseQuestions, parseChoices, renderChoice, isMultiSelect, renderSelection, type HumanChoice } from "@/lib/human-choices";
 import type { HumanBody } from "@/lib/human-validate";
@@ -53,6 +53,8 @@ function SingleHumanAnswer({ bead, route, disabled: held }: { bead: Bead; route?
     fingerprint: JSON.stringify(body),
     draft: { text, selected } satisfies SingleDraft,
     warning: route?.warning,
+    // What the human route writes: a closed item that holds it is this answer, sent (age-7uad).
+    record: route ? undefined : answerRecord(body),
   });
   const sendRespond = (text: string, choice?: HumanChoice, choices?: HumanChoice[], note?: string) =>
     send("respond", humanBody.respond(text, choice, choices, note));

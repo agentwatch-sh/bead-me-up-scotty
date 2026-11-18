@@ -11,10 +11,10 @@ const require = createRequire(import.meta.url);
 function load(name) {
   const exports = {};
   const code = ts.transpileModule(readFileSync(new URL(`../lib/${name}.ts`, import.meta.url), "utf8"), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
-  vm.runInNewContext(code, { exports, require: (id) => id.startsWith("./") ? load(id.slice(2)) : require(id), Error, Object, Date, Array, Set, Map, JSON, Number, String, Uint8Array, Math }, { filename: name });
+  vm.runInNewContext(code, { exports, require: (id) => id.startsWith("./") ? load(id.slice(2)) : require(id), Error, Object, Date, Array, Set, Map, JSON, Number, String, Uint8Array, Math, TextEncoder }, { filename: name });
   return exports;
 }
-const { isHidden, outboxAfter, patchAnswered, outboxText, outboxKey, listWithStart, failureFor, afterFailure, mayHaveLanded, failureText, ANSWER_TIMEOUT_MS, clickIdFor, newClickId, needsRecheck, keepsFailedCard, recheckStillCurrent, SAVED_TEXT, CLOSED_NOW_TEXT } = load("answer-outbox");
+const { isHidden, outboxAfter, patchAnswered, outboxText, outboxKey, listWithStart, failureFor, afterFailure, mayHaveLanded, failureText, ANSWER_TIMEOUT_MS, clickIdFor, newClickId, needsRecheck, keepsFailedCard, recheckStillCurrent, SAVED_TEXT, CLOSED_NOW_TEXT, holdsAnswer, answerRecord } = load("answer-outbox");
 
 // The click: the item leaves at once, whatever list is on screen.
 let box = outboxAfter({}, { type: "send", id: "q-1", kind: "respond", draft: { text: "typed" } });
@@ -144,10 +144,11 @@ console.log("PASS answer outbox: an error shows only in the form of its own kind
   assert.match(failureText(network), /did not reach the board/);
   assert.match(failureText(aborted), /did not reach the board/);
   // The page gives up before the board does: the answer may still be saved (re-check Minor 1).
-  assert.equal(failureText(timeout), `The board did not answer within ${ANSWER_TIMEOUT_MS / 1000} s; your answer may still be saved: check the item before answering again.`);
+  assert.equal(failureText(timeout), "The board did not answer within 90 s; your answer may still be saved: check the item before answering again.");
   assert.equal(failureText(server), "Your answer is saved; closing failed: try again.");
   assert.equal(failureText(refusal), refusal.message);
-  assert.equal(ANSWER_TIMEOUT_MS, 30000);
+  // One bd call may run 60 s (SCOTTY_BD_TIMEOUT_MS), and an answer runs several (age-7uad).
+  assert.equal(ANSWER_TIMEOUT_MS, 90000);
 }
 console.log("PASS answer outbox: which failures are checked against the item, and their words");
 
@@ -240,3 +241,112 @@ console.log("PASS answer outbox: an uncertain failure is checked again when the 
   assert.equal(recheckStillCurrent(older, older, undefined), false, "cleared");
 }
 console.log("PASS answer outbox: a recheck acts only when its try is still the item's latest, failed and uncertain");
+
+// ---- A closed item that holds this answer: the answer is recorded (age-7uad) ----
+// After a time limit or a lost response the item is found closed. The page compares the answer
+// the item recorded (agentwatch's rule: the latest answer comment made at or before the close)
+// with the one it sent: equal, the answer is recorded; different or unreadable, the neutral words.
+{
+  const { validateHumanAnswer } = load("human-validate");
+  const { renderChoice, renderGroup, renderDecline } = load("human-choices");
+  const ME = "human:selden";
+  const MANAGER = "manager:taylor/aw-lead";
+  const sent = { clickId: "click-a" };
+  const T = (s) => `2026-11-18T10:00:${String(s).padStart(2, "0")}Z`;
+  const mark = { "scotty.answer_click": "click-a" };
+  // The item as the human route leaves it: the operator's comment, this click's mark, the close.
+  const recorded = (text, over = {}) => ({ id: "q-1", status: "closed", close_reason: "Responded", closed_at: T(30), labels: ["human", "question"],
+    metadata: { ...mark }, comments: text === null ? [] : [{ author: ME, text, created_at: T(29) }], ...over });
+  const respond = { comment: "Ship it on Monday.", reason: "Responded" };
+
+  // Equal: recorded.
+  assert.equal(holdsAnswer(recorded("Ship it on Monday."), respond, sent, ME), true);
+  // A discussion comment after the close (an agent, a manager or the operator) is not the answer.
+  assert.equal(holdsAnswer(recorded("Ship it on Monday.", { comments: [{ author: ME, text: "Ship it on Monday.", created_at: T(29) },
+    { author: "agent:test", text: "Thanks.", created_at: T(40) }, { author: MANAGER, text: "Noted.", created_at: T(41) }] }), respond, sent, ME), true);
+  // An agent's comment before the close is no answer either (agentwatch's answer authors only).
+  assert.equal(holdsAnswer(recorded("Ship it on Monday.", { comments: [{ author: ME, text: "Ship it on Monday.", created_at: T(20) },
+    { author: "agent:test", text: "Working on it.", created_at: T(25) }] }), respond, sent, ME), true);
+
+  // Different: the neutral words stay.
+  assert.equal(holdsAnswer(recorded("Ship it on Friday."), respond, sent, ME), false, "another text");
+  assert.equal(holdsAnswer(recorded("Ship it on Monday.", { comments: [{ author: ME, text: "Ship it on Monday.", created_at: T(20) },
+    { author: MANAGER, text: "Ship it on Friday.", created_at: T(25) }] }), respond, sent, ME), false, "a manager's later answer is the one recorded");
+  assert.equal(holdsAnswer(recorded("Ship it on Monday.", { comments: [{ author: MANAGER, text: "Ship it on Monday.", created_at: T(25) }] }), respond, sent, ME), false,
+    "the same words by another author are not the operator's answer");
+  assert.equal(holdsAnswer(recorded("Ship it on Monday.", { comments: [{ author: "link:mac/assistant", text: "Ship it on Monday.", created_at: T(25) }] }), respond, sent, ME), false);
+  assert.equal(holdsAnswer(recorded("Ship it on Monday.", { close_reason: "Dismissed" }), respond, sent, ME), false, "another close reason");
+  assert.equal(holdsAnswer(recorded("Ship it on Monday.", { metadata: {} }), respond, sent, ME), false, "no mark: this click's write is unknown");
+  assert.equal(holdsAnswer(recorded("Ship it on Monday.", { metadata: { "scotty.answer_click": "click-z" } }), respond, sent, ME), false, "another click's mark");
+  assert.equal(holdsAnswer(recorded("Ship it on Monday.", { metadata: { ...mark, "board.review": "pending" } }), respond, sent, ME), false, "a manager's answer waits for review");
+  assert.equal(holdsAnswer(recorded("Ship it on Monday."), respond, sent, undefined), false, "the operator's actor is unknown");
+  assert.equal(holdsAnswer(recorded(null), respond, sent, ME), false, "the item's comments are not there to read");
+  assert.equal(holdsAnswer(recorded("Ship it on Monday.", { status: "open", close_reason: null, closed_at: null }), respond, sent, ME), false, "still waiting");
+  assert.equal(holdsAnswer(recorded("Ship it on Monday."), undefined, sent, ME), false, "no record to compare (a To Review action)");
+  // keep-open (SCOTTY_HUMAN_RESPOND=keep-open): done is open without the human label, with no close reason.
+  assert.equal(holdsAnswer(recorded("Ship it on Monday.", { status: "open", close_reason: null, closed_at: null, labels: ["question"] }), respond, sent, ME), true);
+
+  // Every kind of answer the human route writes: answerRecord gives the comment and the reason it writes.
+  const blue = { version: 1, id: "blue", label: "Use blue", description: "Keep blue.", recommended: true };
+  const green = { version: 1, id: "green", label: "Use green", description: "Make green.", recommended: false };
+  // An option as the metadata holds it: the choice without its version.
+  const options = [blue, green].map(({ id, label, description, recommended }) => ({ id, label, description, recommended }));
+  const questions = [
+    { id: "theme", question: "Which theme?", header: "Theme", multiSelect: false, options },
+    { id: "format", question: "Which format?", header: "Format", multiSelect: false, options },
+  ];
+  const identity = (q) => ({ id: q.id, question: q.question, header: q.header, multiSelect: q.multiSelect });
+  const group = [{ ...identity(questions[0]), action: "responded", choices: [green], text: null, note: "Keep the logo." },
+    { ...identity(questions[1]), action: "responded", choices: null, text: "PDF only." }];
+  const v1 = { "scotty.choices": { version: 1, options } };
+  const v2 = { "scotty.choices": { version: 2, questions } };
+  const open = (metadata = {}) => ({ id: "q-1", title: "Q", status: "open", labels: ["human", "question"], metadata, comments: [] });
+  const bodies = [
+    ["a free-text answer", open(), { action: "respond", text: "Ship it on Monday." }],
+    ["a choice with a note", open(v1), { action: "respond", text: renderChoice(green, "Soon."), choice: green, note: "Soon." }],
+    ["a decline", open(), { action: "decline", text: "The premise is wrong." }],
+    ["a bare Dismiss", open(), { action: "dismiss" }],
+    ["a Dismiss with a comment", open(), { action: "dismiss", text: "Not now." }],
+    ["a Dismiss of a choice", open(v1), { action: "dismiss", choice: blue, text: renderChoice(blue) }],
+    ["a group of answers (version 2)", open(v2), { action: "respond", answers: group, text: renderGroup(group) }],
+  ];
+  for (const [name, item, body] of bodies) {
+    const verdict = validateHumanAnswer(item, body, { closedOk: false });
+    assert.equal(verdict.ok, true, `${name}: ${JSON.stringify(verdict)}`);
+    assert.deepEqual({ ...answerRecord(body) }, { comment: verdict.comment, reason: verdict.reason }, `${name}: the record is what the route writes`);
+  }
+  assert.equal(answerRecord({ action: "decline", text: "No." }).comment, renderDecline("No."));
+  // A bare Dismiss writes no comment: recorded when no other author's answer is the item's.
+  const dismissed = { comment: null, reason: "Dismissed" };
+  assert.equal(holdsAnswer(recorded(null, { close_reason: "Dismissed" }), dismissed, sent, ME), true);
+  assert.equal(holdsAnswer(recorded(null, { close_reason: "Dismissed", comments: [{ author: MANAGER, text: "Use blue.", created_at: T(25) }] }), dismissed, sent, ME), false);
+  assert.equal(holdsAnswer(recorded(null, { close_reason: "Responded" }), dismissed, sent, ME), false);
+
+  // Version 2: the comment holds every answer, and every answer is compared.
+  const groupRecord = answerRecord({ action: "respond", answers: group, text: renderGroup(group) });
+  assert.equal(holdsAnswer(recorded(renderGroup(group)), groupRecord, sent, ME), true, "the same answers");
+  const otherSecond = [group[0], { ...group[1], text: "PDF and HTML." }];
+  assert.equal(holdsAnswer(recorded(renderGroup(otherSecond)), groupRecord, sent, ME), false, "the second answer differs");
+  const otherNote = [{ ...group[0], note: "Drop the logo." }, group[1]];
+  assert.equal(holdsAnswer(recorded(renderGroup(otherNote)), groupRecord, sent, ME), false, "the first answer's note differs");
+  const otherChoice = [{ ...group[0], choices: [blue] }, group[1]];
+  assert.equal(holdsAnswer(recorded(renderGroup(otherChoice)), groupRecord, sent, ME), false, "the first answer's choice differs");
+}
+console.log("PASS answer outbox: a closed item holds this answer only with this click's mark, its close reason and the operator's same comment as its answer; every answer of a group is compared");
+
+// ---- A recheck that finds this answer recorded: the failure becomes the confirmation (age-7uad) ----
+{
+  const key = "q-1";
+  let box = outboxAfter({}, { type: "send", id: key, kind: "answers", draft: { q1: {} } });
+  box = outboxAfter(box, { type: "failed", id: key, error: "timed out", uncertain: true });
+  const done = outboxAfter(box, { type: "recorded", id: key, at: 5000 });
+  assert.deepEqual({ ...done[key] }, { state: "sent", kind: "answers", at: 5000 });
+  assert.equal(isHidden(done[key], 4000), true, "an older list keeps the item out");
+  // Only an uncertain failure: a certain one, a closed-now card, a send that runs, nothing.
+  for (const entry of [{ state: "failed", kind: "respond", error: "e", uncertain: false }, { state: "failed", kind: "respond", error: CLOSED_NOW_TEXT, closedNow: true },
+    { state: "sending", kind: "respond" }, undefined]) {
+    const from = entry ? { [key]: entry } : {};
+    assert.equal(outboxAfter(from, { type: "recorded", id: key, at: 1 })[key], from[key]);
+  }
+}
+console.log("PASS answer outbox: a recheck that finds this answer recorded turns the uncertain failure into the confirmation");

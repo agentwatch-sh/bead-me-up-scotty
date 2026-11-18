@@ -1,5 +1,8 @@
 import type { Bead } from "./schema";
+import type { HumanBody } from "./human-validate";
 import { markedBy } from "./answer-click";
+import { renderDecline } from "./human-choices";
+import { REVIEW_KEY, latestAnswer } from "./review";
 
 /**
  * The answer outbox (agentwatch board age-6mk): the operator's answers and
@@ -38,6 +41,8 @@ export type OutboxEvent =
   | { type: "failed"; id: string; error: string; uncertain?: boolean; closedNow?: boolean }
   /** An uncertain failure's item is closed or done now: the neutral case (re-check rv-6mk-d). */
   | { type: "closedNow"; id: string }
+  /** An uncertain failure's item is closed or done now and holds this answer (`holdsAnswer`): sent after all (age-7uad). */
+  | { type: "recorded"; id: string; at: number }
   /** A queued item that was never sent comes back as it was (Accept all stopped). */
   | { type: "release"; id: string }
   /** The operator dealt with a failure: its error goes. */
@@ -68,6 +73,8 @@ export function outboxAfter(box: Outbox, event: OutboxEvent): Outbox {
       return entry?.state === "failed" && entry.uncertain
         ? { ...box, [event.id]: { ...entry, uncertain: false, closedNow: true, error: CLOSED_NOW_TEXT } }
         : box;
+    case "recorded":
+      return entry?.state === "failed" && entry.uncertain ? { ...box, [event.id]: { state: "sent", kind: entry.kind, at: event.at } } : box;
     case "release":
       return entry?.state === "sending" ? without() : box;
     case "clear":
@@ -130,8 +137,12 @@ export function outboxKey(projectId: string, id: string): string {
   return JSON.stringify([projectId, id]);
 }
 
-/** How long the page waits for the board to take an answer; then the item comes back. */
-export const ANSWER_TIMEOUT_MS = 30_000;
+/**
+ * How long the page waits for the board to take an answer; then the item comes
+ * back. One bd call may run 60 s (SCOTTY_BD_TIMEOUT_MS), and an answer runs
+ * several in its slot: 90 s covers one slow call and the rest (age-7uad).
+ */
+export const ANSWER_TIMEOUT_MS = 90_000;
 
 /**
  * The list, with `startedAt`: when it was requested (`now()` before the request,
@@ -220,6 +231,49 @@ export function newClickId(c: { randomUUID?: () => string; getRandomValues?: (by
 /** The click id of an answer: a retry of the same answer (same fingerprint) keeps it; another answer is a new click. */
 export function clickIdFor(previous: { fingerprint: string; clickId: string } | undefined, fingerprint: string, newId: () => string): string {
   return previous && previous.fingerprint === fingerprint ? previous.clickId : newId();
+}
+
+/**
+ * What the human route writes for one answer (lib/human-validate.ts,
+ * `validateHumanAnswer`): its comment (null for a bare Dismiss) and its close
+ * reason. The page compares it with what the item recorded (`holdsAnswer`).
+ */
+export interface AnswerRecord {
+  comment: string | null;
+  reason: "Responded" | "Dismissed" | "Declined";
+}
+
+/** The comment and the close reason that the human route writes for `body` (the same rules as `validateHumanAnswer`). */
+export function answerRecord(body: HumanBody): AnswerRecord {
+  if (body.action === "decline") return { comment: renderDecline(body.text), reason: "Declined" };
+  if (body.action === "respond") return { comment: body.text, reason: "Responded" };
+  const withComment = body.choice !== undefined || body.answers !== undefined || body.text !== undefined;
+  return { comment: withComment ? body.text ?? null : null, reason: "Dismissed" };
+}
+
+/**
+ * Does the item, closed or done now, hold this answer (age-7uad)? After a time
+ * limit or a lost response, the page reads the item with its comments (the
+ * list) and compares. Only when all hold:
+ *  - it carries this click's mark: the route writes it after the comment, so
+ *    this click's comment is on the item (lib/answer-click.ts);
+ *  - it is closed with this answer's reason (keep-open: done, open without the
+ *    `human` label), and no manager's answer waits for review on it;
+ *  - its answer as agentwatch reads it (`latestAnswer`: the latest comment by
+ *    the operator, a `link:` or a `manager:` author, made at or before the
+ *    close) is the operator's (`humanActor`), with exactly the text sent. A
+ *    group (version 2) holds every answer in that one comment. A bare Dismiss
+ *    writes no comment: no answer comment, or the operator's own.
+ * Anything else, or an item that cannot be read (no comments, no actor), is
+ * not this answer: the neutral words stay (CLOSED_NOW_TEXT).
+ */
+export function holdsAnswer(bead: Partial<Bead>, record: AnswerRecord | undefined, sent: SentAnswer, humanActor: string | undefined): boolean {
+  if (!record || !humanActor || !markedBy(bead.metadata, sent.clickId)) return false;
+  const done = bead.status === "closed" ? bead.close_reason === record.reason : !(bead.labels ?? ["human"]).includes("human");
+  if (!done || bead.metadata?.[REVIEW_KEY] === "pending") return false;
+  const answer = latestAnswer({ comments: bead.comments ?? [], closed_at: bead.closed_at }, humanActor);
+  if (record.comment === null) return answer === null || answer.author === humanActor;
+  return answer !== null && answer.author === humanActor && answer.text === record.comment;
 }
 
 /** Is the item no longer waiting for this kind of answer on the board? */

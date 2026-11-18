@@ -198,7 +198,7 @@ export const api = {
   setViewerMode: (readOnly: boolean) => request<{ readOnly: boolean }>(`${apiRoot}/api/viewer-mode`, {
     method: "PUT", body: JSON.stringify({ readOnly }),
   }),
-  list: (projectId: string) => request<BeadsResponse>(`${base(projectId)}/beads`),
+  list: (projectId: string, signal?: AbortSignal) => request<BeadsResponse>(`${base(projectId)}/beads`, { signal }),
   get: (projectId: string, id: string, signal?: AbortSignal) => request<Bead>(`${base(projectId)}/beads/${enc(id)}`, { signal }),
   create: (projectId: string, input: CreateInput) =>
     request<Bead>(`${base(projectId)}/beads`, { method: "POST", body: JSON.stringify(input) }),
