@@ -5,7 +5,8 @@ import { ACKED_KEY, REVIEW_KEY, REVIEW_BY_KEY, REVIEW_REASON_KEY, errorTag } fro
 import { ANSWER_CLICK_KEY, clickIdOf, markedBy } from "./answer-click";
 
 export type HumanAnswerResult =
-  | { ok: true; bead: Bead }
+  /** `bead` is null when the answer is written and only the read after it failed. */
+  | { ok: true; bead: Bead | null }
   | { ok: false; status: number; error: string; code: string };
 
 /** The answer's comment is on the item, but its close failed: a retry only closes. */
@@ -109,6 +110,14 @@ export async function answerHuman(store: BeadsStore, id: string, body: HumanBody
         log(`human: the review record of ${id} stays: ${errorTag(e)}`);
       }
     }
-    return { ok: true, bead: await s.show(id) };
+    // The answer is written and the item closed (or done): a failed read after it is no
+    // failure of the answer. The route answers 2xx, as the gateway records the operator's
+    // answer only for a 2xx (agentwatch board age-7uad), with no item.
+    try {
+      return { ok: true, bead: await s.show(id) };
+    } catch (e) {
+      log(`human: the answer to ${id} is written, but the read after it failed: ${errorTag(e)}`);
+      return { ok: true, bead: null };
+    }
   });
 }

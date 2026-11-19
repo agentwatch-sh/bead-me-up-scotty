@@ -49,7 +49,9 @@ fakeExecFile[util.promisify.custom] = async (bin, args, opts) => {
   // A command fails when named; "mark" fails only the click's mark, "cleanup" only an unset of metadata.
   const isMark = call[0] === "update" && call.some((a) => a.startsWith("scotty.answer_click="));
   const isCleanup = call[0] === "update" && call.includes("--unset-metadata");
-  if (fail.has(call[0]) || (isMark && fail.has("mark")) || (isCleanup && fail.has("cleanup"))) {
+  // "final-show" fails only a show after the first of this answer: the read after the close.
+  const isFinalShow = call[0] === "show" && log.filter(([when, c]) => when === "start" && c[0] === "show").length > 1;
+  if (fail.has(call[0]) || (isMark && fail.has("mark")) || (isCleanup && fail.has("cleanup")) || (isFinalShow && fail.has("final-show"))) {
     const error = new Error("bd failed");
     error.stderr = JSON.stringify({ error: `${call[0]} refused`, code: "refused" });
     throw error;
@@ -138,6 +140,19 @@ result = await answer({ action: "dismiss" });
 assert.equal(result.ok, true);
 assert.equal(result.bead.status, "closed");
 assert.deepEqual(calls().map((c) => c[0]), ["show", "update", "close", "update", "show"]);
+
+// The answer is written and closed, and only the read after it fails (for example a bd_timeout):
+// the answer stands, so the route answers 2xx with no item (the gateway records the operator's
+// answer only for a 2xx; age-7uad, fix 2). A failed close is still a failure (below).
+for (const body of [{ action: "respond", text: "Use blue." }, { action: "dismiss" }]) {
+  reset();
+  fail.add("final-show");
+  result = await answer(body);
+  assert.equal(result.ok, true, `${body.action}: the answer stands`);
+  assert.equal(result.bead, null, `${body.action}: no item read after the close`);
+  assert.equal(item.status, "closed");
+  assert.deepEqual(calls().map((c) => c[0]).slice(-2), ["close", "show"]);
+}
 
 // SCOTTY_HUMAN_RESPOND=keep-open: the label goes, the item stays open.
 reset();

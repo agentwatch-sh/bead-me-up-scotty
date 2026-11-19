@@ -14,7 +14,7 @@ function load(name) {
   vm.runInNewContext(code, { exports, require: (id) => id.startsWith("./") ? load(id.slice(2)) : require(id), Error, Object, Date, Array, Set, Map, JSON, Number, String, Uint8Array, Math, TextEncoder }, { filename: name });
   return exports;
 }
-const { isHidden, outboxAfter, patchAnswered, outboxText, outboxKey, listWithStart, failureFor, afterFailure, mayHaveLanded, failureText, ANSWER_TIMEOUT_MS, clickIdFor, newClickId, needsRecheck, keepsFailedCard, recheckStillCurrent, SAVED_TEXT, CLOSED_NOW_TEXT, holdsAnswer, answerRecord } = load("answer-outbox");
+const { isHidden, outboxAfter, patchAnswered, outboxText, outboxKey, listWithStart, failureFor, afterFailure, mayHaveLanded, failureText, ANSWER_TIMEOUT_MS, clickIdFor, newClickId, needsRecheck, keepsFailedCard, recheckStillCurrent, SAVED_TEXT, CLOSED_NOW_TEXT, holdsAnswer, answerRecord, noResponse } = load("answer-outbox");
 
 // The click: the item leaves at once, whatever list is on screen.
 let box = outboxAfter({}, { type: "send", id: "q-1", kind: "respond", draft: { text: "typed" } });
@@ -260,31 +260,34 @@ console.log("PASS answer outbox: a recheck acts only when its try is still the i
   const respond = { comment: "Ship it on Monday.", reason: "Responded" };
 
   // Equal: recorded.
-  assert.equal(holdsAnswer(recorded("Ship it on Monday."), respond, sent, ME), true);
+  assert.equal(holdsAnswer(recorded("Ship it on Monday."), respond, sent, ME, false), true);
   // A discussion comment after the close (an agent, a manager or the operator) is not the answer.
   assert.equal(holdsAnswer(recorded("Ship it on Monday.", { comments: [{ author: ME, text: "Ship it on Monday.", created_at: T(29) },
-    { author: "agent:test", text: "Thanks.", created_at: T(40) }, { author: MANAGER, text: "Noted.", created_at: T(41) }] }), respond, sent, ME), true);
+    { author: "agent:test", text: "Thanks.", created_at: T(40) }, { author: MANAGER, text: "Noted.", created_at: T(41) }] }), respond, sent, ME, false), true);
   // An agent's comment before the close is no answer either (agentwatch's answer authors only).
   assert.equal(holdsAnswer(recorded("Ship it on Monday.", { comments: [{ author: ME, text: "Ship it on Monday.", created_at: T(20) },
-    { author: "agent:test", text: "Working on it.", created_at: T(25) }] }), respond, sent, ME), true);
+    { author: "agent:test", text: "Working on it.", created_at: T(25) }] }), respond, sent, ME, false), true);
 
   // Different: the neutral words stay.
-  assert.equal(holdsAnswer(recorded("Ship it on Friday."), respond, sent, ME), false, "another text");
+  assert.equal(holdsAnswer(recorded("Ship it on Friday."), respond, sent, ME, false), false, "another text");
   assert.equal(holdsAnswer(recorded("Ship it on Monday.", { comments: [{ author: ME, text: "Ship it on Monday.", created_at: T(20) },
-    { author: MANAGER, text: "Ship it on Friday.", created_at: T(25) }] }), respond, sent, ME), false, "a manager's later answer is the one recorded");
-  assert.equal(holdsAnswer(recorded("Ship it on Monday.", { comments: [{ author: MANAGER, text: "Ship it on Monday.", created_at: T(25) }] }), respond, sent, ME), false,
+    { author: MANAGER, text: "Ship it on Friday.", created_at: T(25) }] }), respond, sent, ME, false), false, "a manager's later answer is the one recorded");
+  assert.equal(holdsAnswer(recorded("Ship it on Monday.", { comments: [{ author: MANAGER, text: "Ship it on Monday.", created_at: T(25) }] }), respond, sent, ME, false), false,
     "the same words by another author are not the operator's answer");
-  assert.equal(holdsAnswer(recorded("Ship it on Monday.", { comments: [{ author: "link:mac/assistant", text: "Ship it on Monday.", created_at: T(25) }] }), respond, sent, ME), false);
-  assert.equal(holdsAnswer(recorded("Ship it on Monday.", { close_reason: "Dismissed" }), respond, sent, ME), false, "another close reason");
-  assert.equal(holdsAnswer(recorded("Ship it on Monday.", { metadata: {} }), respond, sent, ME), false, "no mark: this click's write is unknown");
-  assert.equal(holdsAnswer(recorded("Ship it on Monday.", { metadata: { "scotty.answer_click": "click-z" } }), respond, sent, ME), false, "another click's mark");
-  assert.equal(holdsAnswer(recorded("Ship it on Monday.", { metadata: { ...mark, "board.review": "pending" } }), respond, sent, ME), false, "a manager's answer waits for review");
-  assert.equal(holdsAnswer(recorded("Ship it on Monday."), respond, sent, undefined), false, "the operator's actor is unknown");
-  assert.equal(holdsAnswer(recorded(null), respond, sent, ME), false, "the item's comments are not there to read");
-  assert.equal(holdsAnswer(recorded("Ship it on Monday.", { status: "open", close_reason: null, closed_at: null }), respond, sent, ME), false, "still waiting");
-  assert.equal(holdsAnswer(recorded("Ship it on Monday."), undefined, sent, ME), false, "no record to compare (a To Review action)");
-  // keep-open (SCOTTY_HUMAN_RESPOND=keep-open): done is open without the human label, with no close reason.
-  assert.equal(holdsAnswer(recorded("Ship it on Monday.", { status: "open", close_reason: null, closed_at: null, labels: ["question"] }), respond, sent, ME), true);
+  assert.equal(holdsAnswer(recorded("Ship it on Monday.", { comments: [{ author: "link:mac/assistant", text: "Ship it on Monday.", created_at: T(25) }] }), respond, sent, ME, false), false);
+  assert.equal(holdsAnswer(recorded("Ship it on Monday.", { close_reason: "Dismissed" }), respond, sent, ME, false), false, "another close reason");
+  assert.equal(holdsAnswer(recorded("Ship it on Monday.", { metadata: {} }), respond, sent, ME, false), false, "no mark: this click's write is unknown");
+  assert.equal(holdsAnswer(recorded("Ship it on Monday.", { metadata: { "scotty.answer_click": "click-z" } }), respond, sent, ME, false), false, "another click's mark");
+  assert.equal(holdsAnswer(recorded("Ship it on Monday.", { metadata: { ...mark, "board.review": "pending" } }), respond, sent, ME, false), false, "a manager's answer waits for review");
+  assert.equal(holdsAnswer(recorded("Ship it on Monday."), respond, sent, undefined, false), false, "the operator's actor is unknown");
+  assert.equal(holdsAnswer(recorded(null), respond, sent, ME, false), false, "the item's comments are not there to read");
+  assert.equal(holdsAnswer(recorded("Ship it on Monday.", { status: "open", close_reason: null, closed_at: null }), respond, sent, ME, false), false, "still waiting");
+  assert.equal(holdsAnswer(recorded("Ship it on Monday."), undefined, sent, ME, false), false, "no record to compare (a To Review action)");
+  // Done without a close (open, no human label) holds an answer only on a board that runs
+  // SCOTTY_HUMAN_RESPOND=keep-open; agentwatch runs close mode and reads only closed items (fix 3).
+  const doneOpen = recorded("Ship it on Monday.", { status: "open", close_reason: null, closed_at: null, labels: ["question"] });
+  assert.equal(holdsAnswer(doneOpen, respond, sent, ME, true), true, "keep-open: done");
+  assert.equal(holdsAnswer(doneOpen, respond, sent, ME, false), false, "close mode: an open item holds no answer");
 
   // Every kind of answer the human route writes: answerRecord gives the comment and the reason it writes.
   const blue = { version: 1, id: "blue", label: "Use blue", description: "Keep blue.", recommended: true };
@@ -318,19 +321,19 @@ console.log("PASS answer outbox: a recheck acts only when its try is still the i
   assert.equal(answerRecord({ action: "decline", text: "No." }).comment, renderDecline("No."));
   // A bare Dismiss writes no comment: recorded when no other author's answer is the item's.
   const dismissed = { comment: null, reason: "Dismissed" };
-  assert.equal(holdsAnswer(recorded(null, { close_reason: "Dismissed" }), dismissed, sent, ME), true);
-  assert.equal(holdsAnswer(recorded(null, { close_reason: "Dismissed", comments: [{ author: MANAGER, text: "Use blue.", created_at: T(25) }] }), dismissed, sent, ME), false);
-  assert.equal(holdsAnswer(recorded(null, { close_reason: "Responded" }), dismissed, sent, ME), false);
+  assert.equal(holdsAnswer(recorded(null, { close_reason: "Dismissed" }), dismissed, sent, ME, false), true);
+  assert.equal(holdsAnswer(recorded(null, { close_reason: "Dismissed", comments: [{ author: MANAGER, text: "Use blue.", created_at: T(25) }] }), dismissed, sent, ME, false), false);
+  assert.equal(holdsAnswer(recorded(null, { close_reason: "Responded" }), dismissed, sent, ME, false), false);
 
   // Version 2: the comment holds every answer, and every answer is compared.
   const groupRecord = answerRecord({ action: "respond", answers: group, text: renderGroup(group) });
-  assert.equal(holdsAnswer(recorded(renderGroup(group)), groupRecord, sent, ME), true, "the same answers");
+  assert.equal(holdsAnswer(recorded(renderGroup(group)), groupRecord, sent, ME, false), true, "the same answers");
   const otherSecond = [group[0], { ...group[1], text: "PDF and HTML." }];
-  assert.equal(holdsAnswer(recorded(renderGroup(otherSecond)), groupRecord, sent, ME), false, "the second answer differs");
+  assert.equal(holdsAnswer(recorded(renderGroup(otherSecond)), groupRecord, sent, ME, false), false, "the second answer differs");
   const otherNote = [{ ...group[0], note: "Drop the logo." }, group[1]];
-  assert.equal(holdsAnswer(recorded(renderGroup(otherNote)), groupRecord, sent, ME), false, "the first answer's note differs");
+  assert.equal(holdsAnswer(recorded(renderGroup(otherNote)), groupRecord, sent, ME, false), false, "the first answer's note differs");
   const otherChoice = [{ ...group[0], choices: [blue] }, group[1]];
-  assert.equal(holdsAnswer(recorded(renderGroup(otherChoice)), groupRecord, sent, ME), false, "the first answer's choice differs");
+  assert.equal(holdsAnswer(recorded(renderGroup(otherChoice)), groupRecord, sent, ME, false), false, "the first answer's choice differs");
 }
 console.log("PASS answer outbox: a closed item holds this answer only with this click's mark, its close reason and the operator's same comment as its answer; every answer of a group is compared");
 
@@ -350,3 +353,23 @@ console.log("PASS answer outbox: a closed item holds this answer only with this 
   }
 }
 console.log("PASS answer outbox: a recheck that finds this answer recorded turns the uncertain failure into the confirmation");
+
+// ---- Only a try that got no response from the route may be confirmed from the item (age-7uad, fix 1) ----
+// The gateway records the operator's answer only for the route's 2xx. A route that answered with an
+// error (500 answer_saved_close_failed after a close that wrote, a bd_timeout) recorded none, so the
+// page never says "recorded" for it; a dropped connection, the page's time limit or the tunnel's 524
+// (no response from the route) may still have ended in the route's 2xx.
+{
+  const network = new TypeError("Failed to fetch");
+  const timeout = Object.assign(new Error("signal timed out"), { name: "TimeoutError" });
+  const aborted = Object.assign(new Error("aborted"), { name: "AbortError" });
+  const tunnel = Object.assign(new Error("Request failed (524)"), { status: 524 });
+  for (const e of [network, timeout, aborted, tunnel]) assert.equal(noResponse(e), true, e.message);
+  const saved = Object.assign(new Error(SAVED_TEXT), { status: 500, code: "answer_saved_close_failed" });
+  const gateway = Object.assign(new Error("board backend unavailable"), { status: 502 });
+  const starting = Object.assign(new Error("board backend starting; retry"), { status: 503 });
+  const bdTimeout = Object.assign(new Error("bd timed out"), { status: 400, code: "bd_timeout" });
+  const stale = Object.assign(new Error("This question is no longer waiting for an answer."), { status: 409, code: "stale_question" });
+  for (const e of [saved, gateway, starting, bdTimeout, stale, undefined, null, "x"]) assert.equal(noResponse(e), false, String(e?.message ?? e));
+}
+console.log("PASS answer outbox: only a try with no response from the route (a dropped connection, the time limit, a 524) may be confirmed from the item");

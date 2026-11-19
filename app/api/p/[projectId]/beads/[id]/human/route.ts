@@ -20,7 +20,8 @@ export async function POST(req: Request, { params }: Ctx) {
     const body = humanBodySchema.parse(await req.json());
     const keepOpen = process.env.SCOTTY_HUMAN_RESPOND === "keep-open";
     const result = await answerHuman(store, id, body, { actor: cfg.humanActor, keepOpen });
-    return result.ok ? ok(result.bead) : ok({ error: result.error, code: result.code }, result.status);
+    // An answer written whose read after it failed answers its id only (lib/human-answer.ts).
+    return result.ok ? ok(result.bead ?? { id }) : ok({ error: result.error, code: result.code }, result.status);
   } catch (e) {
     return fail(e);
   }

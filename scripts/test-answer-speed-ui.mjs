@@ -88,6 +88,12 @@ try {
   };
   // Re-ask for the list now (react-query refetches on a visibility change).
   const refetch = () => page.evaluate(() => document.dispatchEvent(new Event("visibilitychange", { bubbles: true })));
+  // The same once the list on screen is stale: the page refetches on a visibility change only after
+  // its staleTime (2 s, components/providers.tsx), and the list that a send's end asks for can be newer.
+  const refetchStale = async () => {
+    await new Promise((done) => setTimeout(done, 2100));
+    await refetch();
+  };
 
   // ---- Respond: out at the click, out while an older list arrives, then the confirmation ----
   {
@@ -319,6 +325,60 @@ try {
     console.log("PASS answer speed: a closed item whose recorded answer is another one keeps the neutral words, with the typed text");
   }
 
+  // ---- The route answered with an error (500 answer_saved_close_failed) although its close wrote: the
+  // gateway records no answer for a non-2xx, so the page never says "recorded"; the neutral words stay (age-7uad, fix 1) ----
+  {
+    const typed = "Ship it on Wednesday.";
+    const item = create("A close that wrote but failed?", null);
+    const panel = await visit(item);
+    await panel.getByRole("textbox", { name: "Write an answer" }).fill(typed);
+    await page.route(`**/beads/${item}/human`, async (route) => {
+      await route.fetch(); // the board writes the comment, the mark and the close
+      // and the route answers as when bd's close wrote but exited with an error
+      await route.fulfill({ status: 500, json: { error: "Your answer is saved; closing failed: try again.", code: "answer_saved_close_failed" } });
+    });
+    await leaves(panel, () => panel.getByRole("button", { name: "Respond", exact: true }).click());
+    await panelOf(item).getByRole("alert").waitFor();
+    assert.equal(await panelOf(item).getByRole("alert").innerText(), CLOSED_NOW);
+    assert.equal(await panelOf(item).getByRole("textbox", { name: "Write an answer" }).inputValue(), typed, "the typed text is back");
+    assert.equal(await toast(`Responded to ${item}`).count(), 0, "a route error never reads as recorded");
+    assert.equal(show(item).close_reason, "Responded");
+    assert.equal(mine(item).at(-1).text, typed, "the item holds the same text");
+    await page.unroute(`**/beads/${item}/human`);
+    await page.locator(`[data-closed-meanwhile="${item}"]`).getByRole("button", { name: "OK", exact: true }).click();
+    await panelOf(item).waitFor({ state: "detached" });
+    console.log("PASS answer speed: a 500 answer_saved_close_failed on an item closed with the same text keeps the neutral words");
+  }
+
+  // ---- The same when the item settles later: a try that the route answered with an error is never
+  // confirmed by the recheck either (age-7uad, fix 1) ----
+  {
+    const typed = "Ship it on Thursday.";
+    const item = create("A route error, then the item settles?", null);
+    const panel = await visit(item);
+    await panel.getByRole("textbox", { name: "Write an answer" }).fill(typed);
+    let clickId;
+    await page.route(`**/beads/${item}/human`, async (route) => {
+      clickId = route.request().postDataJSON().click_id;
+      await route.fulfill({ status: 500, json: { error: "Your answer is saved; closing failed: try again.", code: "answer_saved_close_failed" } });
+    });
+    await leaves(panel, () => panel.getByRole("button", { name: "Respond", exact: true }).click());
+    // The item, read again, is still open without the mark: the route's own words, uncertain.
+    await panelOf(item).getByRole("alert").waitFor();
+    assert.equal(await panelOf(item).getByRole("alert").innerText(), "Your answer is saved; closing failed: try again.");
+    // The same answer then lands, with this click's mark, and the item closes: the recheck runs.
+    run("human:selden", ["comment", item, "--", typed]);
+    run("human:selden", ["update", item, "--set-metadata", `scotty.answer_click=${clickId}`]);
+    run("human:selden", ["close", item, "--reason", "Responded"]);
+    await page.waitForFunction(([id, words]) => document.querySelector(`[data-human-answer="${id}"] [role="alert"]`)?.textContent === words,
+      [item, CLOSED_NOW], { timeout: 60000 });
+    assert.equal(await toast(`Responded to ${item}`).count(), 0, "the recheck never confirms a try the route answered");
+    await page.unroute(`**/beads/${item}/human`);
+    await page.locator(`[data-closed-meanwhile="${item}"]`).getByRole("button", { name: "OK", exact: true }).click();
+    await panelOf(item).waitFor({ state: "detached" });
+    console.log("PASS answer speed: a try the route answered with an error is not confirmed when the item settles later");
+  }
+
   // ---- The same item reopened and answered again with the same words: a new click, written (re-check rv-6mk-e, Minor 7) ----
   {
     const typed = "Ship it.";
@@ -372,7 +432,7 @@ try {
     await page.unroute(`**/beads/${item}/human`);
     // A fresh list shows the item closed: the card stays until the operator dismisses it.
     const listed = page.waitForResponse((r) => r.request().method() === "GET" && new URL(r.url()).pathname.endsWith(listPath));
-    await refetch();
+    await refetchStale();
     await listed;
     await painted();
     assert.equal(await panelOf(item).count(), 1, "the failed card stays although the item is closed");
@@ -460,7 +520,7 @@ try {
     await page.unroute(`**${listPath}`);
     await page.unroute(`**/beads/${item}/human`);
     const listed = page.waitForResponse((r) => r.request().method() === "GET" && new URL(r.url()).pathname.endsWith(listPath));
-    await refetch();
+    await refetchStale();
     await listed;
     await page.locator(`[data-closed-meanwhile="${item}"]`).getByRole("button", { name: "OK", exact: true }).click();
     await panelOf(item).waitFor({ state: "detached" });

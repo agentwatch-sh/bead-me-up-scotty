@@ -26,6 +26,9 @@ export async function GET(_req: Request, { params }: Ctx) {
         lanePrefix: lanePrefix(),
         repoRefsUrl: repoRefsUrl(projectId, store.kind),
         viewerZoneUrl: viewerZoneUrl(),
+        // The human route's mode (app/api/p/[projectId]/beads/[id]/human/route.ts): the
+        // page reads only a closed item as an answer unless the board keeps items open.
+        humanKeepOpen: process.env.SCOTTY_HUMAN_RESPOND === "keep-open",
       },
     });
   } catch (e) {

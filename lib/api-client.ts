@@ -20,6 +20,8 @@ export interface Meta {
   repoRefsUrl?: string | null;
   /** The URL of the viewer's zone (SCOTTY_VIEWER_ZONE_URL, lib/viewer-zone.ts), or null: the browser's zone. */
   viewerZoneUrl?: string | null;
+  /** SCOTTY_HUMAN_RESPOND=keep-open: Respond and Dismiss remove the `human` label and leave the item open. */
+  humanKeepOpen?: boolean;
 }
 export interface BeadsResponse {
   beads: Bead[];

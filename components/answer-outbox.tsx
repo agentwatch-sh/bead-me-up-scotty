@@ -10,7 +10,7 @@ import { api, type BeadsResponse } from "@/lib/api-client";
 import type { HumanBody } from "@/lib/human-validate";
 import type { Bead } from "@/lib/schema";
 import {
-  ANSWER_TIMEOUT_MS, CLOSED_NOW_TEXT, SAVED_TEXT, afterFailure, clickIdFor, failureText, holdsAnswer, isHidden, mayHaveLanded, needsRecheck, newClickId,
+  ANSWER_TIMEOUT_MS, CLOSED_NOW_TEXT, SAVED_TEXT, afterFailure, clickIdFor, failureText, holdsAnswer, isHidden, mayHaveLanded, needsRecheck, newClickId, noResponse,
   outboxAfter, outboxKey, outboxText,
   patchAnswered, recheckStillCurrent, type AnswerRecord, type Outbox, type OutboxEntry, type OutboxEvent, type OutboxKind, type SentAnswer,
 } from "@/lib/answer-outbox";
@@ -67,7 +67,12 @@ const REREAD_TIMEOUT_MS = 10_000;
 /** How long the page waits for the list (the item with its comments) to compare the answer it recorded (age-7uad). */
 const RECORD_READ_TIMEOUT_MS = 30_000;
 
-type Attempt = { item: OutboxSend; sent: SentAnswer };
+/**
+ * One try of an answer. `routeAnswered`: the route answered it with an error
+ * status (not `noResponse`); the gateway recorded no answer for it, so neither
+ * the failure nor a later recheck confirms it from the item (age-7uad).
+ */
+type Attempt = { item: OutboxSend; sent: SentAnswer; routeAnswered?: boolean };
 
 /**
  * The operator's answers on their way to the board (agentwatch board age-6mk).
@@ -106,12 +111,13 @@ export function AnswerOutboxProvider({ projectId, listStartedAt, children }: {
    * else null, also when it cannot be read. `bd show` leaves the comments out,
    * so this reads the list, which has them and the operator's actor (age-7uad).
    */
-  const recorded = React.useCallback(async (item: OutboxSend, sent: SentAnswer): Promise<Bead | null> => {
-    if (!item.record) return null;
+  const recorded = React.useCallback(async (attempt: Attempt): Promise<Bead | null> => {
+    const { item, sent } = attempt;
+    if (!item.record || attempt.routeAnswered) return null;
     try {
       const list = await api.list(projectId, AbortSignal.timeout(RECORD_READ_TIMEOUT_MS));
       const bead = list.beads.find((b) => b.id === item.id);
-      return bead && holdsAnswer(bead, item.record, sent, list.meta?.humanActor) ? bead : null;
+      return bead && holdsAnswer(bead, item.record, sent, list.meta?.humanActor, !!list.meta?.humanKeepOpen) ? bead : null;
     } catch {
       return null;
     }
@@ -157,6 +163,8 @@ export function AnswerOutboxProvider({ projectId, listStartedAt, children }: {
       let closedNow = false;
       if (attempt && mayHaveLanded(e)) {
         uncertain = true;
+        // The route's own error (a 5xx, not a lost response): never confirmed from the item.
+        attempt.routeAnswered = !noResponse(e);
         const found = await reread(item);
         if (found) {
           // The list shows the item as the board has it now: a closed item's form is disabled at once.
@@ -164,9 +172,9 @@ export function AnswerOutboxProvider({ projectId, listStartedAt, children }: {
           const outcome = afterFailure(item.kind, found, attempt.sent);
           if (outcome === "saved") message = SAVED_TEXT;
           if (outcome === "closed") {
-            // Closed now: when the item holds this very answer, it was sent (age-7uad):
-            // the confirmation, as after a 2xx. Else, or unreadable, the neutral words.
-            const holding = await recorded(item, attempt.sent);
+            // Closed now: when no response came and the item holds this very answer, it was
+            // sent (age-7uad): the confirmation, as after a 2xx. Else, or unreadable, the neutral words.
+            const holding = await recorded(attempt);
             if (holding) {
               confirm(key, item, holding);
               return true;
@@ -205,7 +213,7 @@ export function AnswerOutboxProvider({ projectId, listStartedAt, children }: {
         if (!found || !recheckStillCurrent(attempts.current.get(key), attempt, boxNow.current[key])) return;
         patch(found);
         if (afterFailure(attempt.item.kind, found, attempt.sent) !== "closed") return;
-        const holding = await recorded(attempt.item, attempt.sent);
+        const holding = await recorded(attempt);
         // The operator may have sent again, or dealt with the failure, while the list was read.
         if (!recheckStillCurrent(attempts.current.get(key), attempt, boxNow.current[key])) return;
         // Closed now: its try goes too, so a later answer on a reopened item is a new click.

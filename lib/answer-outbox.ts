@@ -165,6 +165,17 @@ const failure = (e: unknown): Failure => (e && typeof e === "object" ? (e as Fai
 const noAnswer = (e: unknown) => ["TypeError", "AbortError", "TimeoutError"].includes(String(failure(e).name));
 
 /**
+ * Did the try get no response from the route (age-7uad)? A dropped connection,
+ * the page's time limit, or the tunnel's 524 (the route did not answer in time):
+ * the route may still have answered 2xx, and the gateway then records the
+ * operator's answer. Any other status is the route's own word (or a refusal
+ * before it): a non-2xx records no answer, so the page never says "recorded".
+ */
+export function noResponse(e: unknown): boolean {
+  return noAnswer(e) || failure(e).status === 524;
+}
+
+/**
  * Can the write have happened although the request failed? When no answer came
  * (a dropped connection, the time limit) or the board failed on its side (5xx),
  * yes: the item is read again to tell. A refusal (4xx: a stale question, no
@@ -257,7 +268,8 @@ export function answerRecord(body: HumanBody): AnswerRecord {
  * list) and compares. Only when all hold:
  *  - it carries this click's mark: the route writes it after the comment, so
  *    this click's comment is on the item (lib/answer-click.ts);
- *  - it is closed with this answer's reason (keep-open: done, open without the
+ *  - it is closed with this answer's reason (only on a board that runs
+ *    SCOTTY_HUMAN_RESPOND=keep-open, `keepOpen`: also done, open without the
  *    `human` label), and no manager's answer waits for review on it;
  *  - its answer as agentwatch reads it (`latestAnswer`: the latest comment by
  *    the operator, a `link:` or a `manager:` author, made at or before the
@@ -265,11 +277,13 @@ export function answerRecord(body: HumanBody): AnswerRecord {
  *    group (version 2) holds every answer in that one comment. A bare Dismiss
  *    writes no comment: no answer comment, or the operator's own.
  * Anything else, or an item that cannot be read (no comments, no actor), is
- * not this answer: the neutral words stay (CLOSED_NOW_TEXT).
+ * not this answer: the neutral words stay (CLOSED_NOW_TEXT). The page asks only
+ * for a try that got no response from the route (`noResponse`).
  */
-export function holdsAnswer(bead: Partial<Bead>, record: AnswerRecord | undefined, sent: SentAnswer, humanActor: string | undefined): boolean {
+export function holdsAnswer(bead: Partial<Bead>, record: AnswerRecord | undefined, sent: SentAnswer, humanActor: string | undefined, keepOpen: boolean): boolean {
   if (!record || !humanActor || !markedBy(bead.metadata, sent.clickId)) return false;
-  const done = bead.status === "closed" ? bead.close_reason === record.reason : !(bead.labels ?? ["human"]).includes("human");
+  // agentwatch runs close mode and reads only a closed item as an answer: open and done counts only with keep-open.
+  const done = bead.status === "closed" ? bead.close_reason === record.reason : keepOpen && !(bead.labels ?? ["human"]).includes("human");
   if (!done || bead.metadata?.[REVIEW_KEY] === "pending") return false;
   const answer = latestAnswer({ comments: bead.comments ?? [], closed_at: bead.closed_at }, humanActor);
   if (record.comment === null) return answer === null || answer.author === humanActor;
