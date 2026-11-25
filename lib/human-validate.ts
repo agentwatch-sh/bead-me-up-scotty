@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { Bead } from "./schema";
 import { parseChoices, choiceSnapshot, renderChoice, isMultiSelect, selectionSnapshot, renderSelection, renderDecline, parseQuestions, normalizeAnswers, renderGroup, validNote, NOTE_MAX } from "./human-choices";
-import { REVIEW_KEY } from "./review";
+import { REVIEW_KEY, citedAnswerer } from "./review";
 
 export const humanBodySchema = z.discriminatedUnion("action", [
   // `click_id`: the id of the click that sent it; a retry of the same click keeps it (age-6mk, lib/answer-click.ts).
@@ -22,11 +22,15 @@ const fail = (status: number, error: string, code: string): HumanValidation => (
  * The human route's checks on one answer, with no writes. `closedOk` lets a
  * closed item pass (a Reverse answers an item that the manager closed); a
  * deferred item and one without the `human` label never pass. Without it, a
- * closed item whose manager answer waits for review points to To Review.
+ * closed item whose manager answer waits for review points to To Review. An
+ * agent's cited answer (agentwatch age-29t6) points there too, as an agent's:
+ * this check reads no answer record, so it never names the words as the
+ * operator's (To Review shows them only when the host's cite check binds them).
  */
 export function validateHumanAnswer(item: Bead | null, body: HumanBody, opts: { closedOk: boolean }): HumanValidation {
   // The manager answered and closed it while the person had it open in Needs You.
   if (!opts.closedOk && item?.status === "closed" && item.metadata?.[REVIEW_KEY] === "pending") {
+    if (citedAnswerer(item) !== null) return fail(409, "An agent answered this; review it in To Review.", "agent_answered");
     return fail(409, "Your manager answered this; review it in To Review.", "manager_answered");
   }
   const answerable = (b: Bead | null): b is Bead =>

@@ -20,6 +20,8 @@ export interface Meta {
   repoRefsUrl?: string | null;
   /** The URL of the viewer's zone (SCOTTY_VIEWER_ZONE_URL, lib/viewer-zone.ts), or null: the browser's zone. */
   viewerZoneUrl?: string | null;
+  /** To Review's cite check (SCOTTY_CITE_CHECK_URL, lib/review.ts citeCheckBody), or null: no cited answer shows as checked. */
+  citeCheckUrl?: string | null;
   /** SCOTTY_HUMAN_RESPOND=keep-open: Respond and Dismiss remove the `human` label and leave the item open. */
   humanKeepOpen?: boolean;
 }

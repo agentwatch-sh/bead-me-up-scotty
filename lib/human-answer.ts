@@ -70,7 +70,7 @@ export async function answerHuman(store: BeadsStore, id: string, body: HumanBody
     // A manager's answer that waits for review still points to To Review.
     if (!item || item.status === "closed" || item.status === "deferred" || !item.labels.includes("human") || done(item, opts.keepOpen)) {
       const managed = validateHumanAnswer(item, body, { closedOk: false });
-      if (!managed.ok && managed.code === "manager_answered") return { ok: false, status: managed.status, error: managed.error, code: managed.code };
+      if (!managed.ok && (managed.code === "manager_answered" || managed.code === "agent_answered")) return { ok: false, status: managed.status, error: managed.error, code: managed.code };
       return { ok: false, status: 409, error: "This question is no longer waiting for an answer.", code: "stale_question" };
     }
     const verdict = validateHumanAnswer(item, body, { closedOk: false });

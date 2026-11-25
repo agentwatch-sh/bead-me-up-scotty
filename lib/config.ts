@@ -133,6 +133,21 @@ export function viewerZoneUrl(): string | null {
   return url.startsWith("/") && !url.startsWith("//") && !url.includes("\\") ? url : null;
 }
 
+/**
+ * To Review's cite check (agentwatch board age-29t6): SCOTTY_CITE_CHECK_URL names
+ * the host's route that says whether its answer record binds an agent's cited
+ * answer to the item's cite keys (lib/review.ts `citeCheckBody`). `{project}`
+ * becomes the project id. Only a path on this origin is used (the browser sends
+ * its own login with the request); anything else, or no variable, gives null,
+ * and To Review then shows every cited answer as not checked.
+ */
+export function citeCheckUrl(projectId: string, kind: string): string | null {
+  const template = process.env.SCOTTY_CITE_CHECK_URL;
+  if (!template || kind !== "bd") return null;
+  const url = template.replace(/\{project\}/g, encodeURIComponent(projectId));
+  return url.startsWith("/") && !url.startsWith("//") && !url.includes("\\") ? url : null;
+}
+
 function configDir(): string {
   const base = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config");
   return path.join(base, "bead-me-up-scotty");

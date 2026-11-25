@@ -10,13 +10,60 @@ import { relTime } from "@/lib/beads-view";
 import { useViewerZone } from "@/hooks/use-viewer-zone";
 import { formatDateTime } from "@/lib/viewer-zone";
 import { parseChoice, parseChoices, parseDecline, parseGroup, parseQuestions, parseSelection } from "@/lib/human-choices";
-import { needsReview, reviewAnswer, REVIEW_REASON_KEY } from "@/lib/review";
+import { citeCheckBody, needsReview, reviewAnswer, REVIEW_REASON_KEY } from "@/lib/review";
 import { useCommentReview } from "@/hooks/use-beads";
 import type { Bead } from "@/lib/schema";
 
 /** An Accept of the manager's answer, through the answer outbox: the row leaves at the click. */
 const acceptOf = (projectId: string, id: string): OutboxSend =>
   ({ id, kind: "accept", request: (signal, clickId) => api.review.accept(projectId, id, signal, clickId), fingerprint: "accept" });
+
+/** The cite checks that answered bound, by their body: a bound close stays bound. */
+const boundChecks = new Set<string>();
+/** A check that did not answer bound is asked again this often, at most twice (the host records its row just after the close). */
+const CITE_RECHECK_MS = 3000;
+
+/**
+ * Does the host's answer record bind this cited answer (agentwatch age-29t6)?
+ * The item's cite keys are bd metadata that any local writer can set, so the
+ * row names the words as the operator's only when the host's cite check
+ * (meta.citeCheckUrl, lib/review.ts citeCheckBody) answers `{"bound": true}`.
+ * No URL, an error, an unreachable host or any other answer: false.
+ */
+function useCiteCheck(bead: Bead, url: string | null | undefined): boolean {
+  const body = React.useMemo(() => citeCheckBody(bead), [bead]);
+  const key = body ? JSON.stringify(body) : null;
+  const [bound, setBound] = React.useState<string | null>(null);
+  React.useEffect(() => {
+    if (!key || !url || boundChecks.has(key)) return;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const ask = async (left: number) => {
+      try {
+        const res = await fetch(url, {
+          method: "POST", credentials: "same-origin", cache: "no-store", body: key,
+          headers: { "Content-Type": "application/json", Accept: "application/json" },
+        });
+        const data: unknown = res.ok ? await res.json() : null;
+        if (stopped) return;
+        if ((data as { bound?: unknown } | null)?.bound === true) {
+          boundChecks.add(key);
+          setBound(key);
+          return;
+        }
+      } catch {
+        // Unreachable: not checked.
+      }
+      if (!stopped && left > 0) timer = setTimeout(() => void ask(left - 1), CITE_RECHECK_MS);
+    };
+    void ask(2);
+    return () => {
+      stopped = true;
+      if (timer !== undefined) clearTimeout(timer);
+    };
+  }, [key, url]);
+  return key !== null && (bound === key || boundChecks.has(key));
+}
 
 /** What the manager answered, as a person reads it. */
 function answerText(bead: Bead, text: string | undefined): string {
@@ -131,7 +178,7 @@ export function ToReviewView() {
 }
 
 function ReviewRow({ bead, actor, disabled: bulkBusy, onHold }: { bead: Bead; actor: string; disabled: boolean; onHold: (id: string, on: boolean) => void }) {
-  const { readOnly, openDetail, projectId } = useApp();
+  const { readOnly, openDetail, projectId, meta } = useApp();
   const zone = useViewerZone();
   const outbox = useAnswerOutbox();
   const entry = outbox.entry(bead.id);
@@ -150,8 +197,12 @@ function ReviewRow({ bead, actor, disabled: bulkBusy, onHold }: { bead: Bead; ac
     return () => onHold(bead.id, false);
   }, [bead.id, holding, onHold]);
   const answer = reviewAnswer(bead, actor);
-  // An agent's answer with a checked cite of the operator's chat words (agentwatch age-29t6).
+  // An agent's answer with a cite of the operator's chat words (agentwatch age-29t6): named
+  // as the operator's words only when the host's answer record binds it; else not checked.
   const cite = answer?.cite;
+  const checked = useCiteCheck(bead, meta?.citeCheckUrl);
+  const shownCite = cite && checked ? cite : null;
+  const unchecked = !!cite && !checked;
   const reason = bead.metadata?.[REVIEW_REASON_KEY];
   const questions = parseQuestions(bead.metadata?.["scotty.choices"]);
   const options = questions ? null : parseChoices(bead.metadata?.["scotty.choices"]);
@@ -201,19 +252,24 @@ function ReviewRow({ bead, actor, disabled: bulkBusy, onHold }: { bead: Bead; ac
           {questions.map((q) => <li key={q.id} className="break-words">{q.header}: {q.question}</li>)}
         </ul>
       )}
-      {cite && (
+      {shownCite && (
         <div data-review-cite={bead.id} className="mb-2 min-w-0 text-[12.5px]">
           <p className="break-words font-[600]">
-            The operator&apos;s answer given in chat to {cite.session || "an unknown session"} at {formatDateTime(cite.typedAt, zone) || "an unknown time"}
+            The operator&apos;s answer given in chat to {shownCite.session || "an unknown session"} at {formatDateTime(shownCite.typedAt, zone) || "an unknown time"}
           </p>
-          <p className="whitespace-pre-wrap break-words text-[var(--text-2)]">Your words: {cite.words || "none recorded"}</p>
+          <p className="whitespace-pre-wrap break-words text-[var(--text-2)]">Your words: {shownCite.words || "none recorded"}</p>
         </div>
       )}
       <dl className="mb-3 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-[12.5px]">
-        <dt className="text-[var(--text-3)]">{cite ? "Answer" : "Manager's answer"}</dt>
+        <dt className="text-[var(--text-3)]">{shownCite ? "Answer" : unchecked ? "An agent's answer (not checked)" : "Manager's answer"}</dt>
         <dd className="min-w-0 whitespace-pre-wrap break-words font-[600]">{answerText(bead, answer?.text)}</dd>
-        <dt className="text-[var(--text-3)]">Why</dt>
-        <dd className="min-w-0 whitespace-pre-wrap break-words text-[var(--text-2)]">{typeof reason === "string" && reason ? reason : "No reason given"}</dd>
+        {/* The reason of an unchecked cited answer is bd metadata that names the operator: not shown. */}
+        {!unchecked && (
+          <>
+            <dt className="text-[var(--text-3)]">Why</dt>
+            <dd className="min-w-0 whitespace-pre-wrap break-words text-[var(--text-2)]">{typeof reason === "string" && reason ? reason : "No reason given"}</dd>
+          </>
+        )}
         <dt className="text-[var(--text-3)]">Asked by</dt>
         <dd className="min-w-0 break-words text-[var(--text-2)]">{bead.created_by || "unknown"}</dd>
         {unsent && !commenting && (

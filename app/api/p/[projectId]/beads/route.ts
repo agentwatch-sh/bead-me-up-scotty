@@ -1,5 +1,5 @@
 import { getStore } from "@/lib/store";
-import { getConfig, isReadOnly, lanePrefix, repoRefsUrl, viewerZoneUrl } from "@/lib/config";
+import { citeCheckUrl, getConfig, isReadOnly, lanePrefix, repoRefsUrl, viewerZoneUrl } from "@/lib/config";
 import { createInputSchema } from "@/lib/schema";
 import { ok, fail } from "@/lib/api";
 
@@ -26,6 +26,8 @@ export async function GET(_req: Request, { params }: Ctx) {
         lanePrefix: lanePrefix(),
         repoRefsUrl: repoRefsUrl(projectId, store.kind),
         viewerZoneUrl: viewerZoneUrl(),
+        // To Review's cite check (agentwatch age-29t6): without it, no cited answer shows as checked.
+        citeCheckUrl: citeCheckUrl(projectId, store.kind),
         // The human route's mode (app/api/p/[projectId]/beads/[id]/human/route.ts): the
         // page reads only a closed item as an answer unless the board keeps items open.
         humanKeepOpen: process.env.SCOTTY_HUMAN_RESPOND === "keep-open",

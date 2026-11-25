@@ -91,6 +91,9 @@ console.log("PASS needsReview: closed, pending, latest answer is the manager's; 
       "board.review_cite_session": "aw-lead",
       "board.review_cite_typed_at": "2026-11-25T14:57:00Z",
       "board.review_cite_words": "use option two",
+      // The daemon writes the answer's time with milliseconds; bd keeps whole seconds,
+      // so the agent's comment of the same second (T(20)) counts.
+      "board.review_answered_at": "2026-11-02T10:00:20.300Z",
       ...(record === null ? {} : { "board.review_cite_record": record }),
     },
     comments: comments ?? [{ author, text: "Use option two.", created_at: T(20) }],
@@ -174,7 +177,46 @@ console.log("PASS needsReview: closed, pending, latest answer is the manager's; 
   delete partial.metadata["board.review_cite_words"];
   partial.metadata["board.review_cite_session"] = 5;
   assert.deepEqual({ ...reviewAnswer(partial, H).cite }, { session: "", typedAt: "2026-11-25T14:57:00Z", words: "" });
-  console.log("PASS citedAnswerer, needsReview and reviewAnswer: an agent's answer with a checked cite (age-29t6)");
+  // Review of A3, defect 2: a cited Dismiss on a free-text item writes no comment. An earlier
+  // comment of the cited agent (on its own question, say) is never its answer.
+  for (const by of ["agent:s", "link:taylor/s"]) {
+    const earlier = { author: by, text: "my own note", created_at: T(10) };
+    const dismissedEarly = citedBead({ by, comments: [earlier], close: "Dismissed" });
+    assert.equal(needsReview(dismissedEarly, H), true, by);
+    const shown = reviewAnswer(dismissedEarly, H);
+    assert.equal(shown.text, "", `${by}: the earlier comment is no answer`);
+    assert.equal(shown.author, by);
+    assert.equal(needsReview(citedBead({ by, comments: [earlier] }), H), false, `${by}: a Responded close needs the answer's comment`);
+    assert.equal(reviewAnswer(citedBead({ by, comments: [earlier, { author: by, text: "Yes.", created_at: T(20) }] }), H).text, "Yes.");
+  }
+  // With no answer time that parses, no comment of the cited agent counts.
+  for (const at of [undefined, "", "not a time"]) {
+    const timeless = citedBead({ by: "agent:s", author: "agent:s" });
+    if (at === undefined) delete timeless.metadata["board.review_answered_at"]; else timeless.metadata["board.review_answered_at"] = at;
+    assert.equal(needsReview(timeless, H), false, String(at));
+  }
+
+  // citeCheckBody: what To Review asks the host; the host's row decides (agentwatch's cite check).
+  const body = review.citeCheckBody(citedBead({ by: "agent:s", author: "agent:s" }));
+  assert.deepEqual({ ...body, cite: { ...body.cite } }, {
+    id: "x-1", close_reason: "Responded", closed_at: T(30), review_by: "agent:s",
+    cite: {
+      "board.review_cite_session": "aw-lead", "board.review_cite_typed_at": "2026-11-25T14:57:00Z",
+      "board.review_cite_words": "use option two", "board.review_cite_record": RECORD,
+    },
+  });
+  assert.equal(review.citeCheckBody(managerBead()), null, "a manager answer is not checked");
+  assert.equal(review.citeCheckBody(beadWithoutCiteRecord({ by: "agent:s", author: "agent:s" })), null);
+  assert.equal(review.citeCheckBody({ ...citedBead({ by: "agent:s", author: "agent:s" }), closed_at: null }), null);
+  const odd = citedBead({ by: "agent:s", author: "agent:s" });
+  odd.metadata["board.review_cite_words"] = 5;
+  assert.equal("board.review_cite_words" in review.citeCheckBody(odd).cite, false, "only string keys go");
+
+  // Needs You on an item that a cited answer closed: an agent's answer, never "your manager".
+  const { validateHumanAnswer } = load("human-validate");
+  const verdict = validateHumanAnswer(citedBead({ by: "agent:s", author: "agent:s" }), { action: "respond", text: "No." }, { closedOk: false });
+  assert.deepEqual({ ...verdict }, { ok: false, status: 409, error: "An agent answered this; review it in To Review.", code: "agent_answered" });
+  console.log("PASS citedAnswerer, needsReview, reviewAnswer and citeCheckBody: an agent's answer with a cite; only comments after the answer (age-29t6)");
 }
 
 // A fake store. `fail` maps a step name to a count of calls to fail; `after` makes the step do its

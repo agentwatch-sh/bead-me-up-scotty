@@ -18,6 +18,8 @@ export const REVIEW_CITE_SESSION_KEY = "board.review_cite_session";
 export const REVIEW_CITE_TYPED_AT_KEY = "board.review_cite_typed_at";
 export const REVIEW_CITE_WORDS_KEY = "board.review_cite_words";
 export const REVIEW_CITE_RECORD_KEY = "board.review_cite_record";
+/** When the answer under review was given (agentwatch's daemon: UTC with milliseconds). */
+export const REVIEW_ANSWERED_AT_KEY = "board.review_answered_at";
 
 type Answer = { author: string; text: string };
 /** The facts of a cited answer that To Review shows: the session and the UTC time where the operator typed the words, and the words. */
@@ -57,28 +59,46 @@ export function citedAnswerer(bead: Pick<Bead, "metadata">): string | null {
 }
 
 /**
+ * From when the cited agent's comment can be its answer: the whole second of
+ * `board.review_answered_at` (bd keeps whole seconds, agentwatch's daemon
+ * milliseconds); NaN when the item holds no time that parses. agentwatch's
+ * `_cited_since` (age-29t6).
+ */
+function citedSince(bead: Partial<Pick<Bead, "metadata">>): number {
+  const value = bead.metadata?.[REVIEW_ANSWERED_AT_KEY];
+  const at = typeof value === "string" ? Date.parse(value) : NaN;
+  return Number.isNaN(at) ? NaN : Math.floor(at / 1000) * 1000;
+}
+
+/**
  * An author whose comment can be an item's answer (agentwatch's
  * `answer_comments`): the board user, any `link:`, any `manager:`, and the
- * agent that the item's review keys name for a cited answer (`citedBy`).
+ * agent that the item's review keys name for a cited answer (`citedBy`). The
+ * cited agent's comment counts only when made at or after its answer (`since`,
+ * also for a `link:` agent): its earlier comment (on its own question, say) is
+ * never the answer of a cited Dismiss that wrote none.
  */
-function isAnswerAuthor(author: string, humanActor: string, citedBy: string | null = null): boolean {
-  return author === humanActor || author.startsWith("link:") || author.startsWith("manager:") || (citedBy !== null && author === citedBy);
+function isAnswerAuthor(author: string, humanActor: string, at: number, citedBy: string | null = null, since = NaN): boolean {
+  if (citedBy !== null && author === citedBy) return !Number.isNaN(since) && !Number.isNaN(at) && at >= since;
+  return author === humanActor || author.startsWith("link:") || author.startsWith("manager:");
 }
 
 /**
  * The latest comment by an answer author (the board user `humanActor`, any
- * `link:` agent, any `manager:`, and `citedBy` when given) made at or before
+ * `link:` agent, any `manager:`, and `citedBy` when given, its comments only
+ * from `board.review_answered_at` on) made at or before
  * `closed_at`: the answer, as agentwatch reads it. A discussion comment on the
  * closed item (later than `closed_at`) is not an answer. A comment whose time
  * does not parse keeps its place in the list order, as in agentwatch.
  */
-export function latestAnswer(bead: Pick<Bead, "comments" | "closed_at">, humanActor: string, citedBy: string | null = null): Answer | null {
+export function latestAnswer(bead: Pick<Bead, "comments" | "closed_at"> & Partial<Pick<Bead, "metadata">>, humanActor: string, citedBy: string | null = null): Answer | null {
   const closedAt = bead.closed_at ? Date.parse(bead.closed_at) : NaN;
+  const since = citedBy !== null ? citedSince(bead) : NaN;
   let best: Answer | null = null;
   let bestAt = -Infinity;
   for (const c of bead.comments ?? []) {
-    if (!isAnswerAuthor(c.author, humanActor, citedBy)) continue;
     const at = c.created_at ? Date.parse(c.created_at) : NaN;
+    if (!isAnswerAuthor(c.author, humanActor, at, citedBy, since)) continue;
     if (!Number.isNaN(at) && !Number.isNaN(closedAt) && at > closedAt) continue;
     const when = Number.isNaN(at) ? bestAt : at;
     if (when >= bestAt) {
@@ -126,10 +146,34 @@ const citeText = (bead: Pick<Bead, "metadata">, key: string): string => {
   return typeof value === "string" ? value : "";
 };
 
+/** The body of the host's cite check of a cited answer (SCOTTY_CITE_CHECK_URL). */
+export type CiteCheckBody = { id: string; close_reason: string; closed_at: string; review_by: string; cite: Record<string, string> };
+
+/**
+ * What To Review asks the host (agentwatch's `POST /api/board/cite-check`) about
+ * a cited answer: the item, its close, `board.review_by` and its four cite keys
+ * (the ones that are strings). The host answers `{"bound": true}` only when its
+ * answer record holds that agent's row of this close with the record's digest,
+ * and the words, session and time keys are that record's. Null for an item that
+ * is no cited answer (`citedAnswerer`) or has no close time.
+ */
+export function citeCheckBody(bead: Bead): CiteCheckBody | null {
+  const citedBy = citedAnswerer(bead);
+  if (citedBy === null || !bead.closed_at) return null;
+  const cite: Record<string, string> = {};
+  for (const key of [REVIEW_CITE_SESSION_KEY, REVIEW_CITE_TYPED_AT_KEY, REVIEW_CITE_WORDS_KEY, REVIEW_CITE_RECORD_KEY]) {
+    const value = bead.metadata?.[key];
+    if (typeof value === "string") cite[key] = value;
+  }
+  return { id: bead.id, close_reason: bead.close_reason ?? "", closed_at: bead.closed_at, review_by: citedBy, cite };
+}
+
 /**
  * The answer that a To Review row shows: a manager's answer as `managerAnswer`
  * gives it, or the cited agent's answer with its cite (the session, the UTC time
- * and the operator's words, from the item's cite keys). A comment-less cited
+ * and the words, from the item's cite keys, as they are: bd metadata that any
+ * local writer can set). The row names them as the operator's words only when
+ * the host's cite check (`citeCheckBody`) answers bound. A comment-less cited
  * dismissal is the cited agent's with empty text. Null for any other item (a
  * comment-less manager dismissal too, as `managerAnswer`).
  */

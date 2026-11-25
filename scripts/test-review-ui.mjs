@@ -39,7 +39,8 @@ function citedAnswered(title, { by = CITED_AGENT, record = true } = {}) {
     "board.review_cite_words": "use option two",
     ...(record ? { "board.review_cite_record": JSON.stringify({ id: "r1", session: "aw-lead", typed_at: 1764082620, sig: "x" }) } : {}),
   };
-  run(by, ["update", id, "--metadata", JSON.stringify(meta)]);
+  // The answer's time, before its comment (the daemon's order): the agent's comment counts from it.
+  run(by, ["update", id, "--metadata", JSON.stringify({ ...meta, "board.review_answered_at": new Date().toISOString() })]);
   run(by, ["comment", id, "Use option two."]);
   run(by, ["close", id, "--reason", "Responded"]);
   return id;
@@ -119,15 +120,48 @@ try {
   await page.getByText("· nothing to review").waitFor();
   assert.equal(await page.getByRole("button", { name: /^Accept all/ }).count(), 0);
 
-  // agentwatch age-29t6: an agent's answer with a checked cite of the operator's chat words.
-  // The heading names the chat and the time in the viewer's zone, the words show under it,
-  // then the answer. An item without the record key is no cited answer: it never shows.
+  // agentwatch age-29t6: an agent's answer with a cite of the operator's chat words. The
+  // page asks the host's cite check (SCOTTY_CITE_CHECK_URL; here a stub in the page) and
+  // names the words as the operator's only when it answers bound. Bound: the heading names
+  // the chat and the time in the viewer's zone, the words show under it, then the answer.
+  // A forged key set (no row: not bound) and an unreachable host: "An agent's answer (not
+  // checked)", no words, no reason. An item without the record key never shows.
+  const checks = new Map(); // item id -> "bound" | "unbound" | "abort"
+  const checkBodies = [];
+  await page.route("**/api/test-cite-check/**", async (route) => {
+    const body = JSON.parse(route.request().postData() || "{}");
+    checkBodies.push(body);
+    const verdict = checks.get(body.id) ?? "unbound";
+    if (verdict === "abort") return route.abort();
+    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ s: "ok", bound: verdict === "bound" }) });
+  });
   const uncited = citedAnswered("Which option, with no record?", { record: false });
+  const forged = citedAnswered("Which option, forged?");
+  const unreachable = citedAnswered("Which option, no host?");
   const cited = citedAnswered("Which option, as said in chat?");
-  await open(cited);
+  checks.set(cited, "bound");
+  checks.set(unreachable, "abort");
+  await open(cited, forged, unreachable);
   assert.equal(await row(uncited).count(), 0, "no record key, no row");
-  await page.getByText("· 1 answer to review").waitFor();
-  await page.locator("nav").getByRole("button", { name: /^To Review\s*1$/ }).waitFor();
+  await page.getByText("· 3 answers to review").waitFor();
+  await page.locator("nav").getByRole("button", { name: /^To Review\s*3$/ }).waitFor();
+  await row(cited).locator(`[data-review-cite="${cited}"]`).waitFor();
+  const sent = checkBodies.find((b) => b.id === cited);
+  assert.deepEqual([sent.close_reason, sent.review_by, sent.cite["board.review_cite_words"], typeof sent.cite["board.review_cite_record"], typeof sent.closed_at],
+    ["Responded", CITED_AGENT, "use option two", "string", "string"]);
+  for (const id of [forged, unreachable]) {
+    await row(id).getByText("An agent's answer (not checked)").waitFor();
+    const neutral = await row(id).innerText();
+    assert.doesNotMatch(neutral, /The operator's answer given in chat|Your words|use option two|The operator gave/, id);
+    assert.match(neutral, /An agent's answer \(not checked\)\s+Use option two\./);
+    assert.equal(await row(id).getByRole("button", { name: "Accept", exact: true }).isDisabled(), false, "Accept stays");
+    assert.equal(await row(id).getByRole("button", { name: "Reverse", exact: true }).isDisabled(), false, "Reverse stays");
+  }
+  // A not-checked row is accepted as any row.
+  await row(forged).getByRole("button", { name: "Accept", exact: true }).click();
+  await written(forged);
+  assert.equal(show(forged).metadata["board.review"], "accepted");
+  run("human:selden", ["update", unreachable, "--set-metadata", "board.review=accepted"]);
   const citedText = await row(cited).innerText();
   assert.match(citedText, /The operator's answer given in chat to aw-lead at [A-Z][a-z]{2} \d{1,2}, 2026, \d{2}:\d{2} \S+/);
   assert.match(citedText, /Your words: use option two/);
@@ -157,12 +191,15 @@ try {
   assert.deepEqual([comments(cited).at(-1).author, comments(cited).at(-1).text], ["human:selden", "Use option one."]);
   // A remote agent's cited answer (link:) shows and Accept keeps it.
   const linked = citedAnswered("Ship, as said in chat?", { by: "link:taylor/aw-lead" });
+  checks.set(linked, "bound");
   await open(linked);
+  await row(linked).locator(`[data-review-cite="${linked}"]`).waitFor();
   assert.match(await row(linked).innerText(), /The operator's answer given in chat to aw-lead at /);
   await row(linked).getByRole("button", { name: "Accept", exact: true }).click();
   await written(linked);
   assert.equal(show(linked).metadata["board.review"], "accepted");
   run("human:selden", ["update", uncited, "--set-metadata", "board.review=accepted"]);
+  await page.unroute("**/api/test-cite-check/**");
 
   // Tab order reaches Accept without a mouse.
   const tabbed = managerAnswered("Which theme again?");
