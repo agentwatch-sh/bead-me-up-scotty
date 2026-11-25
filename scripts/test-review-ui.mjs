@@ -24,6 +24,26 @@ function managerAnswered(title, { free = false } = {}) {
   run(MANAGER, ["close", id, "--reason", "Responded"]);
   return id;
 }
+// An item as agentwatch's daemon leaves an agent's answer with a checked cite of the
+// operator's chat words (agentwatch age-29t6): the review record by the agent with the
+// four cite keys, the agent's comment, the close. `record: false` leaves the record key out.
+const CITED_AGENT = "agent:aw-lead";
+function citedAnswered(title, { by = CITED_AGENT, record = true } = {}) {
+  const id = bd("create", title, "--type", "task", "--labels", "human,question", "--json").id;
+  const meta = {
+    "board.review": "pending",
+    "board.review_by": by,
+    "board.review_reason": "The operator gave this answer in the chat of aw-lead at 2026-11-25 14:57 UTC (checked words record r1).",
+    "board.review_cite_session": "aw-lead",
+    "board.review_cite_typed_at": "2026-11-25T14:57:00Z",
+    "board.review_cite_words": "use option two",
+    ...(record ? { "board.review_cite_record": JSON.stringify({ id: "r1", session: "aw-lead", typed_at: 1764082620, sig: "x" }) } : {}),
+  };
+  run(by, ["update", id, "--metadata", JSON.stringify(meta)]);
+  run(by, ["comment", id, "Use option two."]);
+  run(by, ["close", id, "--reason", "Responded"]);
+  return id;
+}
 const show = (id) => bd("show", id, "--json")[0];
 const comments = (id) => bd("comments", id, "--json");
 // Start from an empty review list: accept whatever an earlier run left pending.
@@ -80,7 +100,7 @@ try {
   await page.locator("nav").getByRole("button", { name: /^To Review\s*1$/ }).waitFor();
   assert.equal(await needsYou(), needsYouBefore, "nothing is added to Needs You");
   await nav().click();
-  await page.getByText("· 1 answer by your manager").waitFor();
+  await page.getByText("· 1 answer to review").waitFor();
   await row(one).waitFor();
   const text = await row(one).innerText();
   assert.match(text, /Which theme\?/);
@@ -98,6 +118,51 @@ try {
   assert.ok(show(one).metadata["board.reviewed_at"]);
   await page.getByText("· nothing to review").waitFor();
   assert.equal(await page.getByRole("button", { name: /^Accept all/ }).count(), 0);
+
+  // agentwatch age-29t6: an agent's answer with a checked cite of the operator's chat words.
+  // The heading names the chat and the time in the viewer's zone, the words show under it,
+  // then the answer. An item without the record key is no cited answer: it never shows.
+  const uncited = citedAnswered("Which option, with no record?", { record: false });
+  const cited = citedAnswered("Which option, as said in chat?");
+  await open(cited);
+  assert.equal(await row(uncited).count(), 0, "no record key, no row");
+  await page.getByText("· 1 answer to review").waitFor();
+  await page.locator("nav").getByRole("button", { name: /^To Review\s*1$/ }).waitFor();
+  const citedText = await row(cited).innerText();
+  assert.match(citedText, /The operator's answer given in chat to aw-lead at [A-Z][a-z]{2} \d{1,2}, 2026, \d{2}:\d{2} \S+/);
+  assert.match(citedText, /Your words: use option two/);
+  assert.match(citedText, /Answer\s+Use option two\./);
+  assert.doesNotMatch(citedText, /Manager's answer/);
+  assert.ok(citedText.indexOf("The operator's answer given in chat") < citedText.indexOf("Your words:")
+    && citedText.indexOf("Your words:") < citedText.indexOf("Use option two."), "the heading, the words, then the answer");
+  // Comment: the panel names who gets it.
+  await row(cited).getByRole("button", { name: "Comment", exact: true }).click();
+  await row(cited).getByText("Your comment goes to the agents of this item: the asker and the holder. The answer stays here until you accept or reverse it.").waitFor();
+  await row(cited).getByRole("button", { name: "Cancel", exact: true }).click();
+  // Reverse posts to the review route, as for a manager's answer.
+  const citedPosts = [];
+  const onCitedPost = (r) => { if (r.method() === "POST" && r.url().includes(`/beads/${cited}/`)) citedPosts.push(new URL(r.url()).pathname); };
+  page.on("request", onCitedPost);
+  await row(cited).getByRole("button", { name: "Reverse", exact: true }).click();
+  await row(cited).getByText("Your answer replaces this answer. The asking agent gets it as a new answer from you.").waitFor();
+  await row(cited).getByRole("textbox", { name: "Write an answer" }).fill("Use option one.");
+  await row(cited).getByRole("button", { name: "Respond", exact: true }).click();
+  await written(cited);
+  page.off("request", onCitedPost);
+  assert.deepEqual(citedPosts, [`${new URL(base).pathname.replace(/\/$/, "")}/api/p/${project}/beads/${cited}/review`], "one request to the review route");
+  const citedReversed = show(cited);
+  assert.equal(citedReversed.status, "closed");
+  assert.equal(citedReversed.metadata["board.review"], "reversed");
+  assert.equal(citedReversed.metadata["board.reviewed_by"], "human:selden");
+  assert.deepEqual([comments(cited).at(-1).author, comments(cited).at(-1).text], ["human:selden", "Use option one."]);
+  // A remote agent's cited answer (link:) shows and Accept keeps it.
+  const linked = citedAnswered("Ship, as said in chat?", { by: "link:taylor/aw-lead" });
+  await open(linked);
+  assert.match(await row(linked).innerText(), /The operator's answer given in chat to aw-lead at /);
+  await row(linked).getByRole("button", { name: "Accept", exact: true }).click();
+  await written(linked);
+  assert.equal(show(linked).metadata["board.review"], "accepted");
+  run("human:selden", ["update", uncited, "--set-metadata", "board.review=accepted"]);
 
   // Tab order reaches Accept without a mouse.
   const tabbed = managerAnswered("Which theme again?");
@@ -308,5 +373,5 @@ try {
 
   await context.close();
   assert.deepEqual(errors, []);
-  console.log("PASS review UI: badge, hidden, Accept, keyboard, Accept all, Reverse, Comment, no-options, failed reverse, mobile, read-only");
+  console.log("PASS review UI: badge, hidden, Accept, cited answer, keyboard, Accept all, Reverse, Comment, no-options, failed reverse, mobile, read-only");
 } finally { await browser.close(); }

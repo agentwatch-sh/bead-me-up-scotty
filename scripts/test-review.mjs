@@ -75,6 +75,108 @@ assert.equal(needsReview(bead({ comments: [], close_reason: "Responded" })), fal
 assert.equal(needsReview(bead({ comments: [], close_reason: "Dismissed", metadata: { "board.review": "pending", "board.review_by": ME } })), false);
 console.log("PASS needsReview: closed, pending, latest answer is the manager's; author parity; comment-less dismissal");
 
+{
+  // agentwatch age-29t6: an agent's answer with a checked cite of the operator's chat words.
+  // The rule of agentwatch's logic.cited_answerer: board.review pending, accepted or reversed,
+  // board.review_cite_record a string, board.review_by an agent: (no subagent) or a link: actor.
+  const { citedAnswerer, reviewAnswer } = review;
+  const H = ME;
+  const RECORD = JSON.stringify({ id: "r1", session: "aw-lead", typed_at: 1764082620, sig: "x" });
+  const citedBead = ({ by, author, review: state = "pending", record = RECORD, close = "Responded", comments } = {}) => bead({
+    close_reason: close,
+    metadata: {
+      "board.review": state,
+      "board.review_by": by,
+      "board.review_reason": "The operator gave this answer in the chat of aw-lead at 2026-11-25 14:57 UTC (checked words record r1).",
+      "board.review_cite_session": "aw-lead",
+      "board.review_cite_typed_at": "2026-11-25T14:57:00Z",
+      "board.review_cite_words": "use option two",
+      ...(record === null ? {} : { "board.review_cite_record": record }),
+    },
+    comments: comments ?? [{ author, text: "Use option two.", created_at: T(20) }],
+  });
+  const beadWithoutCiteRecord = (over) => citedBead({ ...over, record: null });
+  const managerBead = () => bead();
+  assert.equal(review.REVIEW_CITE_SESSION_KEY, "board.review_cite_session");
+  assert.equal(review.REVIEW_CITE_TYPED_AT_KEY, "board.review_cite_typed_at");
+  assert.equal(review.REVIEW_CITE_WORDS_KEY, "board.review_cite_words");
+  assert.equal(review.REVIEW_CITE_RECORD_KEY, "board.review_cite_record");
+
+  // citedAnswerer: who claims the cited answer, by the item's review keys only.
+  assert.equal(citedAnswerer(citedBead({ by: "agent:s", author: "agent:s" })), "agent:s");
+  assert.equal(citedAnswerer(citedBead({ by: "link:taylor/s", author: "link:taylor/s" })), "link:taylor/s");
+  for (const state of ["accepted", "reversed"]) assert.equal(citedAnswerer(citedBead({ by: "agent:s", author: "agent:s", review: state })), "agent:s", state);
+  for (const state of ["", "other", null, 1]) assert.equal(citedAnswerer(citedBead({ by: "agent:s", author: "agent:s", review: state })), null, String(state));
+  const noState = citedBead({ by: "agent:s", author: "agent:s" });
+  delete noState.metadata["board.review"];
+  assert.equal(citedAnswerer(noState), null, "no board.review");
+  for (const by of ["agent:s/doc", "agent:s/", "agent:", "manager:test/manager", ME, "link:Taylor/s", "link:taylor", "link:taylor/", "link:/s", 7, undefined]) {
+    assert.equal(citedAnswerer(citedBead({ by, author: "agent:s" })), null, String(by));
+  }
+  assert.equal(citedAnswerer(beadWithoutCiteRecord({ by: "agent:s", author: "agent:s" })), null, "no record, no cited answer");
+  assert.equal(citedAnswerer(citedBead({ by: "agent:s", author: "agent:s", record: { id: "r1" } })), null, "the record must be a string");
+  assert.equal(citedAnswerer(bead({ metadata: undefined })), null);
+
+  // needsReview lists a pending cited answer whose latest answer is the cited agent's.
+  assert.equal(needsReview(citedBead({ by: "agent:s", author: "agent:s" }), H), true);
+  assert.equal(needsReview(citedBead({ by: "agent:s", author: "agent:x" }), H), false, "another agent's comment is no answer");
+  assert.equal(needsReview(beadWithoutCiteRecord({ by: "agent:s", author: "agent:s" }), H), false);
+  assert.equal(needsReview(citedBead({ by: "link:taylor/s", author: "link:taylor/s" }), H), true);
+  assert.equal(needsReview(citedBead({ by: "link:taylor/s", author: "link:taylor/other" }), H), false, "another link agent's later answer is not the cited one");
+  assert.equal(needsReview(citedBead({ by: "agent:s/doc", author: "agent:s/doc" }), H), false, "a subagent never cites");
+  assert.equal(needsReview(citedBead({ by: "agent:s", author: "agent:s", review: "accepted" }), H), false, "reviewed already");
+  assert.equal(needsReview({ ...citedBead({ by: "agent:s", author: "agent:s" }), status: "open", closed_at: null }, H), false, "an open item never shows");
+  assert.equal(needsReview(citedBead({ by: "agent:s", author: "agent:s", comments: [
+    { author: "agent:s", text: "Use option two.", created_at: T(20) },
+    { author: ME, text: "No, option one.", created_at: T(25) },
+  ] }), H), false, "the operator's later answer wins");
+  assert.equal(needsReview(citedBead({ by: "agent:s", author: "agent:s", comments: [
+    { author: "agent:s", text: "Use option two.", created_at: T(20) },
+    { author: "agent:s", text: "Done.", created_at: T(45) },
+  ] }), H), true, "a comment after the close is discussion");
+  // A comment-less cited dismissal shows when board.review_by is the cited agent.
+  assert.equal(needsReview(citedBead({ by: "agent:s", comments: [], close: "Dismissed" }), H), true);
+  assert.equal(needsReview(beadWithoutCiteRecord({ by: "agent:s", comments: [], close: "Dismissed" }), H), false);
+  assert.equal(needsReview(citedBead({ by: "agent:s", comments: [], close: "Responded" }), H), false);
+  assert.equal(needsReview(managerBead(), H), true, "unchanged");
+  assert.equal(reviewCount([citedBead({ by: "agent:s", author: "agent:s" }), managerBead(), beadWithoutCiteRecord({ by: "agent:s", author: "agent:s" })]), 2);
+  // latestAnswer without the cited agent keeps its old authors (lib/answer-outbox.ts holdsAnswer).
+  assert.equal(review.latestAnswer(citedBead({ by: "agent:s", author: "agent:s" }), H), null);
+  assert.equal(review.latestAnswer(citedBead({ by: "agent:s", author: "agent:s" }), H, "agent:s").author, "agent:s");
+
+  // reviewAnswer: the answer the row shows, with the cite's facts for a cited answer.
+  const cited = reviewAnswer(citedBead({ by: "agent:s", author: "agent:s" }), H);
+  assert.equal(cited.cite.words, "use option two");
+  assert.deepEqual({ ...cited, cite: { ...cited.cite } }, {
+    author: "agent:s", text: "Use option two.",
+    cite: { session: "aw-lead", typedAt: "2026-11-25T14:57:00Z", words: "use option two" },
+  });
+  assert.equal(reviewAnswer(citedBead({ by: "link:taylor/s", author: "link:taylor/s" }), H).cite.session, "aw-lead");
+  const dismissal = reviewAnswer(citedBead({ by: "agent:s", comments: [], close: "Dismissed" }), H);
+  assert.equal(dismissal.text, "", "a comment-less dismissal has no answer text");
+  assert.equal(dismissal.cite.words, "use option two");
+  const plain = reviewAnswer(managerBead(), H);
+  assert.deepEqual({ ...plain }, { author: "manager:test/manager", text: "Use blue." }, "a manager answer has no cite");
+  assert.equal(reviewAnswer(bead({ comments: [], close_reason: "Dismissed" }), H), null, "a comment-less manager dismissal stays null");
+  assert.equal(reviewAnswer(citedBead({ by: "agent:s", author: "agent:s", comments: [
+    { author: "agent:s", text: "Use option two.", created_at: T(20) },
+    { author: ME, text: "No.", created_at: T(25) },
+  ] }), H), null, "the operator's own answer is no review answer");
+  // A later manager answer over stale cite keys is the manager's, with no cite.
+  const managerLater = reviewAnswer(citedBead({ by: "agent:s", author: "agent:s", comments: [
+    { author: "agent:s", text: "Use option two.", created_at: T(20) },
+    { author: "manager:test/manager", text: "Use blue.", created_at: T(25) },
+  ] }), H);
+  assert.equal(managerLater.author, "manager:test/manager");
+  assert.equal(managerLater.cite, undefined);
+  // A cite key that is missing or not text shows as empty, never as another value.
+  const partial = citedBead({ by: "agent:s", author: "agent:s" });
+  delete partial.metadata["board.review_cite_words"];
+  partial.metadata["board.review_cite_session"] = 5;
+  assert.deepEqual({ ...reviewAnswer(partial, H).cite }, { session: "", typedAt: "2026-11-25T14:57:00Z", words: "" });
+  console.log("PASS citedAnswerer, needsReview and reviewAnswer: an agent's answer with a checked cite (age-29t6)");
+}
+
 // A fake store. `fail` maps a step name to a count of calls to fail; `after` makes the step do its
 // write (record it) and THEN throw, like a close whose trailing show failed. `getResult` is what get returns.
 function fakeStore({ fail = {}, after = [], getResult = null } = {}) {

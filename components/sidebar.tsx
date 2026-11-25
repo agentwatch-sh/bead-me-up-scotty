@@ -67,7 +67,8 @@ export function Sidebar({
   const open = beads.filter((b) => !outbox.hidden(b.id));
   const needsYouCount =
     open.filter(needsHuman).length + beads.filter((b) => readyHumanGate(b, index)).length;
-  // "To Review" = answers a manager gave for you that you have not accepted or reversed.
+  // "To Review" = answers a manager gave for you, or an agent gave with a checked cite of
+  // your chat words (agentwatch age-29t6), that you have not accepted or reversed.
   const toReviewCount = reviewCount(open, actor);
   const game = useGamification(projectId, !!meta?.gamification);
 

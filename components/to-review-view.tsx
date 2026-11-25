@@ -10,7 +10,7 @@ import { relTime } from "@/lib/beads-view";
 import { useViewerZone } from "@/hooks/use-viewer-zone";
 import { formatDateTime } from "@/lib/viewer-zone";
 import { parseChoice, parseChoices, parseDecline, parseGroup, parseQuestions, parseSelection } from "@/lib/human-choices";
-import { managerAnswer, needsReview, REVIEW_REASON_KEY } from "@/lib/review";
+import { needsReview, reviewAnswer, REVIEW_REASON_KEY } from "@/lib/review";
 import { useCommentReview } from "@/hooks/use-beads";
 import type { Bead } from "@/lib/schema";
 
@@ -51,9 +51,10 @@ function commentsAfterClose(bead: Bead, actor: string) {
 }
 
 /**
- * "To Review": answers a manager gave for you. The question is already closed,
- * so nothing here blocks the agent. Accept keeps the answer; Reverse replaces
- * it with yours; Comment sends your manager a comment and keeps the answer
+ * "To Review": answers a manager gave for you, and answers an agent gave with a
+ * checked cite of your words in its chat (agentwatch age-29t6). The question is
+ * already closed, so nothing here blocks the agent. Accept keeps the answer;
+ * Reverse replaces it with yours; Comment sends a comment and keeps the answer
  * here. Nothing leaves by itself.
  */
 export function ToReviewView() {
@@ -97,7 +98,7 @@ export function ToReviewView() {
         <Icon name="check" size={18} className="text-[var(--text-2)]" />
         <h1 className="text-[15px] font-[650]">To Review</h1>
         <span className="text-[12px] text-[var(--text-3)]">
-          · {rows.length === 0 ? "nothing to review" : `${rows.length} ${rows.length === 1 ? "answer" : "answers"} by your manager`}
+          · {rows.length === 0 ? "nothing to review" : `${rows.length} ${rows.length === 1 ? "answer" : "answers"} to review`}
         </span>
         <span className="flex-1" />
         {rows.length > 0 && (
@@ -115,7 +116,7 @@ export function ToReviewView() {
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
         {rows.length === 0 ? (
           <div className="p-10 text-center text-[13px] text-[var(--text-3)]">
-            Nothing to review. When your manager answers an agent&apos;s question for you, the answer shows here until you accept or reverse it.
+            Nothing to review. When your manager answers an agent&apos;s question for you, or an agent answers with your words from its chat, the answer shows here until you accept or reverse it.
           </div>
         ) : (
           <div className="mx-auto flex max-w-3xl flex-col gap-3">
@@ -148,7 +149,9 @@ function ReviewRow({ bead, actor, disabled: bulkBusy, onHold }: { bead: Bead; ac
     onHold(bead.id, holding);
     return () => onHold(bead.id, false);
   }, [bead.id, holding, onHold]);
-  const answer = managerAnswer(bead, actor);
+  const answer = reviewAnswer(bead, actor);
+  // An agent's answer with a checked cite of the operator's chat words (agentwatch age-29t6).
+  const cite = answer?.cite;
   const reason = bead.metadata?.[REVIEW_REASON_KEY];
   const questions = parseQuestions(bead.metadata?.["scotty.choices"]);
   const options = questions ? null : parseChoices(bead.metadata?.["scotty.choices"]);
@@ -198,8 +201,16 @@ function ReviewRow({ bead, actor, disabled: bulkBusy, onHold }: { bead: Bead; ac
           {questions.map((q) => <li key={q.id} className="break-words">{q.header}: {q.question}</li>)}
         </ul>
       )}
+      {cite && (
+        <div data-review-cite={bead.id} className="mb-2 min-w-0 text-[12.5px]">
+          <p className="break-words font-[600]">
+            The operator&apos;s answer given in chat to {cite.session || "an unknown session"} at {formatDateTime(cite.typedAt, zone) || "an unknown time"}
+          </p>
+          <p className="whitespace-pre-wrap break-words text-[var(--text-2)]">Your words: {cite.words || "none recorded"}</p>
+        </div>
+      )}
       <dl className="mb-3 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-[12.5px]">
-        <dt className="text-[var(--text-3)]">Manager&apos;s answer</dt>
+        <dt className="text-[var(--text-3)]">{cite ? "Answer" : "Manager's answer"}</dt>
         <dd className="min-w-0 whitespace-pre-wrap break-words font-[600]">{answerText(bead, answer?.text)}</dd>
         <dt className="text-[var(--text-3)]">Why</dt>
         <dd className="min-w-0 whitespace-pre-wrap break-words text-[var(--text-2)]">{typeof reason === "string" && reason ? reason : "No reason given"}</dd>
@@ -234,7 +245,7 @@ function ReviewRow({ bead, actor, disabled: bulkBusy, onHold }: { bead: Bead; ac
       )}
       {reversing ? (
         <div className="rounded-lg border border-border p-3">
-          <p className="mb-3 text-[12px] text-[var(--text-2)]">Your answer replaces the manager&apos;s. The asking agent gets it as a new answer from you.</p>
+          <p className="mb-3 text-[12px] text-[var(--text-2)]">{cite ? "Your answer replaces this answer." : "Your answer replaces the manager's."} The asking agent gets it as a new answer from you.</p>
           <HumanAnswer bead={bead} route={reverseRoute} disabled={bulkBusy} />
           <div className="mt-2 flex justify-end">
             <button type="button" disabled={disabled} onClick={() => { setReversing(false); outbox.clear(bead.id); }} className="h-8 rounded-lg border border-border px-3 text-[12.5px] disabled:opacity-50">
@@ -244,9 +255,9 @@ function ReviewRow({ bead, actor, disabled: bulkBusy, onHold }: { bead: Bead; ac
         </div>
       ) : commenting ? (
         <div className="rounded-lg border border-border p-3">
-          <p className="mb-2 text-[12px] text-[var(--text-2)]">Your comment goes to your manager. The answer stays here until you accept or reverse it.</p>
+          <p className="mb-2 text-[12px] text-[var(--text-2)]">{cite ? "Your comment goes to the agents of this item: the asker and the holder." : "Your comment goes to your manager."} The answer stays here until you accept or reverse it.</p>
           <textarea value={draft} onChange={(e) => setDraft(e.target.value)} rows={2} disabled={disabled}
-            aria-label="Write a comment" placeholder="Comment on the manager's answer…"
+            aria-label="Write a comment" placeholder={cite ? "Comment on the answer…" : "Comment on the manager's answer…"}
             onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); sendComment(); } }}
             className="mb-2 w-full resize-y rounded-[9px] border border-border bg-[var(--surface-2)] p-[9px_11px] text-[13px] leading-[1.5] text-[var(--text)] outline-none focus:border-[var(--brand)]" />
           {commentError && <p role="alert" className="mb-2 text-[12px] text-red-500">{commentError}</p>}
