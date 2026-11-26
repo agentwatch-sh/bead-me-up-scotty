@@ -250,13 +250,17 @@ references to repo items become links:
 - an item id of this board (`bd-36g`): the item, in its drawer;
 - a commit SHA (7 to 40 lower-case hex characters, at least one digit and one
   letter, a whole word), `#N` and `owner/repo#N`: GitHub, in a new tab. The
-  word right before `#N` (glued, or with a `PR`, `pull`, `pull request` or
-  `issue` between) says which repo: no word, a lead-in word (`fixes #9`,
-  `the PR #4`) or the project repo's own name gives the project's repo; a
-  repo name that no English word has (`self-hosted-runner PR #13`: a
-  hyphen or an underscore, no hyphenated English word) gives that repo of
-  the same owner; any other word (`step #3`, `provisioner PR #4`) gives no
-  link. `#13 and #14` stay in one repo;
+  word right before `#N` (glued, or with a `PR`, `pull`, `pull request`,
+  `issue`, `bug` or `ticket` between) says which repo. No word, a lead-in
+  word (`fixes #9`, `tested PR #4`, `the PR #4`) or the project repo's own
+  name gives the project's repo. A repo name that no English word has
+  (`self-hosted-runner PR #13`: three or more parts joined by `-` or `_`)
+  gives that repo of the same owner, also with adjectives between
+  (`self-hosted-runner draft PR #13`); `owner/repo PR #13` gives that repo
+  when the owner has a dash, a digit or an inner capital. Any other word
+  (`step #3`, `provisioner PR #4`, `dark-mode PR #7`), and a repo name
+  behind punctuation (`self-hosted-runner (#13)`), gives no link: plain
+  text never points to a wrong item. `#13 and #14` stay in one repo;
 - a repo-relative file path, with an optional `:LINE`, `~LINE` or
   `:LINE:COL` (`lib/repo-refs.ts:68`): the file link, in a new tab.
 

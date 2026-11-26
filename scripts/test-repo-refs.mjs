@@ -81,7 +81,7 @@ for (const text of ["PR#12", "a#12", "#0", "#12abc", "C#", "x/#12", "&#38;", "##
 // A project with no GitHub remote links no commits and no issues.
 assert.deepEqual(kinds("55e6b91 #654 owner/repo#3", { ...ctx, github: null }), []);
 
-// --- Rule 2: the word right before `#N` says which repo -----------------------
+// --- Rule 2: the words right before `#N` say which repo ----------------------
 {
   const board = { ...ctx, github: { owner: "MarketData-App", repo: "daily-standup" } };
   const issues = (text) => kinds(text, board).filter((k) => k[0] === "issue").map((k) => [k[1], k[2]]);
@@ -91,46 +91,61 @@ assert.deepEqual(kinds("55e6b91 #654 owner/repo#3", { ...ctx, github: null }), [
   // that repo (same owner), never to the board's repo.
   assert.deepEqual(issues("self-hosted-runner PR #13"), [["#13", runner(13)]]);
   for (const text of ["self-hosted-runner #13", "self-hosted-runner pull #13", "self-hosted-runner pull request #13",
-    "self-hosted-runner issue #13", "self-hosted-runner's PR #13", "'self-hosted-runner' PR #13",
-    "fixed in self-hosted-runner PR #13.", "self-hosted-runner\nPR #13", "code_review_bot #13"]) {
-    const href = text.includes("code_review_bot") ? "https://github.com/MarketData-App/code_review_bot/issues/13" : runner(13);
-    assert.deepEqual(issues(text), [["#13", href]], text);
+    "self-hosted-runner issue #13", "self-hosted-runner bug #13", "self-hosted-runner's PR #13", "'self-hosted-runner' PR #13",
+    "fixed in self-hosted-runner PR #13.", "self-hosted-runner\nPR #13", "self-hosted-runner draft PR #13",
+    "self-hosted-runner new PR #13", "self-hosted-runner open PR #13", "self-hosted-runner merged PR #13",
+    "self-hosted-runner's new draft PR #13", "self-hosted-runner latest issue #13"]) {
+    assert.deepEqual(issues(text), [["#13", runner(13)]], text);
   }
+  assert.deepEqual(issues("code_review_bot #13"), [["#13", "https://github.com/MarketData-App/code_review_bot/issues/13"]]);
   // The name keeps its case: GitHub reads a repo name in any case.
   assert.deepEqual(issues("Self-Hosted-Runner PR #13"), [["#13", "https://github.com/MarketData-App/Self-Hosted-Runner/issues/13"]]);
   // Glued to the name, the whole token is the link (as `owner/repo#N` is).
   assert.deepEqual(issues("see self-hosted-runner#13 now"), [["self-hosted-runner#13", runner(13)]]);
-  // `owner/repo` before the mark names that repo; one of its parts must be a name no English word has.
+  // `owner/repo` before the mark names that repo, when the owner is no word or folder.
   assert.deepEqual(issues("MarketData-App/self-hosted-runner PR #13"), [["#13", runner(13)]]);
   assert.deepEqual(issues("agentwatch-sh/provisioner issue #4"), [["#4", "https://github.com/agentwatch-sh/provisioner/issues/4"]]);
-  for (const text of ["and/or #3", "client/server PR #3", "lib/repo-refs.ts #3", "a/b/c #3", "/opt/self-hosted-runner #3",
-    "./self-hosted-runner/x #3", "https://github.com/MarketData-App/self-hosted-runner/pull/13 #13"]) {
+  assert.deepEqual(issues("AsyncAlchemist/dotfiles #4"), [["#4", "https://github.com/AsyncAlchemist/dotfiles/issues/4"]]);
+  for (const text of ["and/or #3", "client/server PR #3", "Client/Server #3", "lib/repo-refs.ts #3", "a/b/c #3",
+    "packages/web-client #12", "docs/getting-started #3", "/opt/self-hosted-runner #3", "./self-hosted-runner/x #3",
+    "https://github.com/MarketData-App/self-hosted-runner/pull/13 #13"]) {
     assert.deepEqual(issues(text), [], text);
   }
 
   // No name before the mark, or the board's own name: the board's repo, as before.
-  for (const text of ["#13", "PR #13", "PRs #13", "pull request #13", "issue #13", "Issue #13", "(#13)", "feat: a thing (#13)",
-    "done. #13", "see: #13", "daily-standup #13", "Daily-Standup PR #13", "fixes #13", "Closes #13", "see PR #13",
-    "the PR #13", "this pull request #13", "GitHub issue #13", "follow-up #13", "follow-up PR #13", "commit 55e6b91, issue #13",
-    "55e6b91 #13", "age-36g #13", "2026-11-26 #13", "e.g. #13"]) {
+  for (const text of ["#13", "PR #13", "PRs #13", "pull request #13", "pull-request #13", "issue #13", "Issue #13", "Bug #13",
+    "ticket #13", "(#13)", "feat: a thing (#13)", "done. #13", "see: #13", "daily-standup #13", "Daily-Standup PR #13",
+    "fixes #13", "Closes #13", "see PR #13", "the PR #13", "the draft PR #13", "this pull request #13", "GitHub issue #13",
+    "follow-up #13", "follow-up PR #13", "commit 55e6b91, issue #13", "55e6b91 #13", "age-36g #13", "2026-11-26 #13",
+    "e.g. #13", "Tested PR #13", "Pushed PR #13", "Rebased PR #13", "Reviewing PR #13", "Deployed #13", "Created issue #13",
+    "@alice PR #13", "@alice's PR #13", "Tested the PR #13", "the self-hosted-runner fix and the PR #13"]) {
     assert.deepEqual(issues(text).map((k) => k[1]), [own(13)], text);
   }
   assert.deepEqual(issues("daily-standup#13"), [["daily-standup#13", own(13)]]);
   assert.deepEqual(issues("MarketData-App/daily-standup PR #13"), [["#13", own(13)]]);
+  assert.deepEqual(issues("two PRs #13 and #14").map((k) => k[1]), [own(13), own(14)]);
 
   // An ordinary English word is no repo name: plain text, never a cross-repo
   // link, and never the board's repo either (it may name another repo).
   for (const text of ["step #3", "Step #3", "item #2", "the #1", "our #1 goal", "option #2", "provisioner PR #13",
-    "agentwatch #12", "Scotty PR #95", "upstream PR #95", "security issue #13", "merge request #5", "step#3", "a#12",
-    "PR#12"]) {
+    "agentwatch #12", "Scotty PR #95", "Alice's PR #14", "upstream PR #95", "security issue #13", "merge request #5",
+    "step#3", "a#12", "PR#12"]) {
     assert.deepEqual(issues(text), [], text);
   }
-  // A hyphenated English word, a version, an id of another board, a file or
-  // a name with a dot: no cross-repo link either.
-  for (const text of ["high-priority #5", "high-priority issue #5", "docs-only PR #6", "re-open #7", "up-to-date #8",
-    "work-in-progress PR #9", "built-in #3", "pre-existing issue #3", "cross-repo PR #3", "self-hosted #3", "third-party #3",
-    "x-ray #3", "UTF-8 #3", "SHA-256 #3", "agent-v2 #3", "ds-n6b #3", "README.md #3", "next.js PR #3", "follow-up#4",
-    "pre-commit#5"]) {
+  // A repo name of two parts is English as often (`dark-mode`): no link of
+  // either kind. A hyphenated English word, a version, an id of another
+  // board, a file or a name with a dot: no link either.
+  for (const text of ["agent-browser #3", "dark-mode PR #7", "tech-debt PR #9", "rate-limit issue #3", "needs-review #5",
+    "help-wanted #3", "unit-test PR #5", "time-boxed #2", "high-priority #5", "high-priority issue #5", "docs-only PR #6",
+    "re-open #7", "good-first-issue #5", "up-to-date #8", "work-in-progress PR #9", "ready-for-review #3", "do-not-merge #3",
+    "pre-existing issue #3", "cross-repo PR #3", "self-hosted #3", "x-ray #3", "UTF-8 #3", "SHA-256 #3", "agent-v2 #3",
+    "ds-n6b #3", "README.md #3", "next.js PR #3", "follow-up#4", "pre-commit#5", "daily-standup-v2 #3"]) {
+    assert.deepEqual(issues(text), [], text);
+  }
+  // An unmistakable repo name behind punctuation may own the mark: no link.
+  for (const text of ["self-hosted-runner (#13)", "self-hosted-runner (PR #13)", "self-hosted-runner: #13",
+    "self-hosted-runner, PR #13", "(self-hosted-runner) PR #13", "self-hosted-runner – #13", "self-hosted-runner - #13",
+    "MarketData-App/self-hosted-runner (#13)"]) {
     assert.deepEqual(issues(text), [], text);
   }
 
@@ -222,20 +237,32 @@ assert.deepEqual(found.map((l) => [l.ref, l.text, l.code]), [
 ], "fenced and indented code stays plain; links stay as written; tables link");
 // No context at all: nothing changes.
 assert.deepEqual(links("README.md 55e6b91 #654 age-36g", { github: null }), []);
-// The name before an issue mark can be in inline code, bold or a link: the
-// plugin reads the node before the text.
+// The name before an issue mark can be in inline code, bold or a link, and
+// the mark in bold or inline code: the plugin reads the inline nodes before.
 {
-  const issues = (markdown) => links(markdown).filter((l) => l.ref === "issue").map((l) => [l.text, l.url]);
-  const runner = "https://github.com/agentwatch-sh/self-hosted-runner/issues/13";
-  assert.deepEqual(issues("`self-hosted-runner` PR #13"), [["#13", runner]]);
-  assert.deepEqual(issues("**self-hosted-runner** PR #13"), [["#13", runner]]);
-  assert.deepEqual(issues("**self-hosted-runner PR** #13"), [["#13", runner]]);
-  assert.deepEqual(issues("`self-hosted-runner`#13"), [["#13", runner]]);
-  assert.deepEqual(issues("**Fixes** #13"), [["#13", "https://github.com/agentwatch-sh/agentwatch/issues/13"]]);
-  assert.deepEqual(issues("**Note:** #13"), [["#13", "https://github.com/agentwatch-sh/agentwatch/issues/13"]]);
+  const issues = (markdown) => links(markdown).filter((l) => l.ref === "issue").map((l) => [l.text, l.url, l.code]);
+  const runner = (n) => `https://github.com/agentwatch-sh/self-hosted-runner/issues/${n}`;
+  const own = (n) => `https://github.com/agentwatch-sh/agentwatch/issues/${n}`;
+  assert.deepEqual(issues("`self-hosted-runner` PR #13"), [["#13", runner(13), false]]);
+  assert.deepEqual(issues("**self-hosted-runner** PR #13"), [["#13", runner(13), false]]);
+  assert.deepEqual(issues("**self-hosted-runner PR** #13"), [["#13", runner(13), false]]);
+  assert.deepEqual(issues("self-hosted-runner **PR** #13"), [["#13", runner(13), false]]);
+  assert.deepEqual(issues("[self-hosted-runner](https://example.com) PR #13"), [["#13", runner(13), false]]);
+  assert.deepEqual(issues("`self-hosted-runner`#13"), [["#13", runner(13), false]]);
+  assert.deepEqual(issues("self-hosted-runner PR **#13**"), [["#13", runner(13), false]]);
+  assert.deepEqual(issues("self-hosted-runner PR `#13`"), [["#13", runner(13), true]]);
+  assert.deepEqual(issues("**self-hosted-runner PR #13** and #14"), [["#13", runner(13), false], ["#14", runner(14), false]]);
+  assert.deepEqual(issues("**Fixes** #13"), [["#13", own(13), false]]);
+  assert.deepEqual(issues("**Fixed**#13"), [["#13", own(13), false]]);
+  assert.deepEqual(issues("**Note:** #13"), [["#13", own(13), false]]);
+  assert.deepEqual(issues("PR `#13`"), [["#13", own(13), true]]);
   assert.deepEqual(issues("`step` #3"), []);
-  // A block before is no name: each paragraph starts afresh.
-  assert.deepEqual(issues("self-hosted-runner\n\n#13"), [["#13", "https://github.com/agentwatch-sh/agentwatch/issues/13"]]);
+  assert.deepEqual(issues("`step`#3"), []);
+  assert.deepEqual(issues("step `#3`"), []);
+  // A block or a line break before is no name: each paragraph starts afresh.
+  assert.deepEqual(issues("self-hosted-runner\n\n#13"), [["#13", own(13), false]]);
+  assert.deepEqual(issues("- self-hosted-runner\n- #13"), [["#13", own(13), false]]);
+  assert.deepEqual(issues("self-hosted-runner\\\n#13"), [["#13", own(13), false]]);
 }
 // Unknown paths are reported by the plugin too.
 {
