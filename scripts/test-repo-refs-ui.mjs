@@ -24,6 +24,7 @@ const FILE_LINK = "/board-file/selden/demo?path={path}&line={line}&col={column}"
 const description = [
   "The fix is in agentwatch/daemon/no_dump.py:68 and `README.md`, commit 55e6b91, issue #654,",
   "upstream brendan-appstart/bead-me-up-scotty#95, blocked by other-1x2.",
+  "Merged in self-hosted-runner PR #13 (another repo of the owner), not step #3.",
   "Not links: agentwatch/daemon/gone.py:3, the decade began, and deadbeef inside x55e6b91.",
   "",
   "```",
@@ -93,6 +94,7 @@ try {
     { kind: "issue", text: "#654", href: "https://github.com/agentwatch-sh/agentwatch/issues/654", target: "_blank", code: false },
     { kind: "issue", text: "brendan-appstart/bead-me-up-scotty#95", href: "https://github.com/brendan-appstart/bead-me-up-scotty/issues/95", target: "_blank", code: false },
     { kind: "bead", text: "other-1x2", href: `${basePath}/p/demo?bead=other-1x2`, target: null, code: false },
+    { kind: "issue", text: "#13", href: "https://github.com/agentwatch-sh/self-hosted-runner/issues/13", target: "_blank", code: false },
     { kind: "path", text: "README.md~2", href: "/board-file/selden/demo?path=README.md&line=2&col=", target: "_blank", code: false },
     { kind: "commit", text: "55e6b91", href: "https://github.com/agentwatch-sh/agentwatch/commit/55e6b91", target: "_blank", code: true },
     { kind: "bead", text: "other-1x2", href: `${basePath}/p/demo?bead=other-1x2`, target: null, code: false },
