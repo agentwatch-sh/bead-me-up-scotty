@@ -254,13 +254,16 @@ references to repo items become links:
   `issue`, `bug` or `ticket` between) says which repo. No word, a lead-in
   word (`fixes #9`, `tested PR #4`, `the PR #4`) or the project repo's own
   name gives the project's repo. A repo name that no English word has
-  (`self-hosted-runner PR #13`: three or more parts joined by `-` or `_`)
-  gives that repo of the same owner, also with adjectives between
-  (`self-hosted-runner draft PR #13`); `owner/repo PR #13` gives that repo
-  when the owner has a dash, a digit or an inner capital. Any other word
-  (`step #3`, `provisioner PR #4`, `dark-mode PR #7`), and a repo name
-  behind punctuation (`self-hosted-runner (#13)`), gives no link: plain
-  text never points to a wrong item. `#13 and #14` stay in one repo;
+  (`self-hosted-runner PR #13`: three or more parts joined by `-`) gives
+  that repo of the same owner, also with adjectives between
+  (`self-hosted-runner draft PR #13`) and with punctuation after the
+  keyword (`self-hosted-runner PRs: #13, #14`). `owner/repo PR #13` gives
+  that repo when the owner is the project repo's owner, or when owner and
+  repo are no English word, acronym or folder (never `CI/CD PR #12`). Any
+  other word (`step #3`, `provisioner PR #4`, `dark-mode PR #7`), a repo
+  name behind punctuation (`self-hosted-runner (#13)`) or behind a verb
+  (`self-hosted-runner approved PR #13`) gives no link: plain text never
+  points to a wrong item. `#13 and #14` stay in one repo;
 - a repo-relative file path, with an optional `:LINE`, `~LINE` or
   `:LINE:COL` (`lib/repo-refs.ts:68`): the file link, in a new tab.
 

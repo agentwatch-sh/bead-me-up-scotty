@@ -222,18 +222,23 @@ function collect(re: RegExp, text: string, each: (m: RegExpExecArray, start: num
 //  - a word that leads into a reference (LEAD_WORDS: `fixes #9`, `see #12`,
 //    `and #3`, `tested PR #4`), or, before a keyword, a determiner, a number
 //    word or an adjective (ITEM_WORDS: `the PR #4`, `two PRs #5 and #6`):
-//    the board's repo. Up to two adjectives may stand between a repo name
-//    and the keyword: `self-hosted-runner draft PR #13` is that repo's;
+//    the board's repo, unless an unmistakable repo name stands up to two
+//    such words further back (lookBack): behind determiners and adjectives
+//    only it owns the mark (`self-hosted-runner draft PR #13`,
+//    `self-hosted-runner merged #13`); behind a verb or a preposition the
+//    mark may be in either repo, so no link (`self-hosted-runner approved PR
+//    #13`, `self-hosted-runner: fixed in #13`);
 //  - an unmistakable repo name (otherRepoName: three or more parts joined by
-//    `-` or `_`, `self-hosted-runner`, `code_review_bot`): that repo of the
-//    board repo's owner. A wrong guess (a repo of another owner) most often
-//    ends on GitHub's 404 page. `owner/repo` names that repo when the owner
-//    has a dash, a digit or an inner capital (`MarketData-App`,
-//    `AsyncAlchemist`): never a folder (`packages/web-client #12`) or English
-//    (`and/or #3`);
+//    `-`, `self-hosted-runner`, `code-review-bot`): that repo of the board
+//    repo's owner. A wrong guess (a repo of another owner) most often ends
+//    on GitHub's 404 page. `owner/repo` names that repo when the owner is the
+//    board repo's owner, or when the owner (`MarketData-App`,
+//    `AsyncAlchemist`) and the repo are both no English word, acronym or
+//    folder: never `CI/CD PR #12`, `packages/web-client #12` or `and/or #3`;
 //  - an unmistakable repo name or `owner/repo` behind punctuation
 //    (`self-hosted-runner (#13)`, `self-hosted-runner: #13`): no link, as the
-//    mark may be in that repo (`feat: a thing (#13)` stays the board's);
+//    mark may be in that repo (`feat: a thing (#13)` stays the board's). A
+//    keyword behind punctuation reads on (`self-hosted-runner PR: #13`);
 //  - any other word: no link. An English word (`step #3`, `the #1`,
 //    `dark-mode PR #7`) and a repo name of one or two parts
 //    (`provisioner PR #4`, `daily-standup #5`) look the same, and plain text
@@ -286,69 +291,84 @@ const COMPOUND_HEADS = wordSet(`
   re pre post non sub co de un ex multi cross anti auto semi mid mis inter intra meta micro mini mega ultra super over
   under out up down in on off per well ill so all half full one two three four five ten first second third last long
   short high low top real hard soft hand side big small open double single quick fast slow dry front back left right end
-  opt must to
+  opt must to do no not follow
 `);
 const COMPOUND_TAILS = wordSet(`
   up ups in ins on ons off offs out outs down over back by through around away only level time line lines side end based
   related specific wide free safe aware like ish ready friendly driven facing proof style type sensitive insensitive fix
-  fixes term scale way ways less issue issues request requests review reviews wanted needed info
+  fixes term scale way ways less issue issues request requests review reviews wanted needed info bug bugs work
 `);
-const COMPOUND_JOINS = wordSet("to of in by and or not the an for on at with from as per vs than into");
+const COMPOUND_JOINS = wordSet("to of in by and or not it the an for on at with from as per vs than into");
 const ISSUE_KEYWORDS = wordSet("pr prs pull pulls pull-request pull-requests issue issues bug bugs ticket tickets");
 
 // The space between a name, a keyword and the mark (a soft line break is a space).
-const GAP_CHAR_RE = /[ \t \r\n]/;
+const GAP_CHAR_RE = /[ \t\u00a0\r\n]/;
 // A character of the word before a mark: a name, `owner/repo`, or a longer run that is neither.
 const WORD_CHAR_RE = /[A-Za-z0-9._\/-]/;
 // Punctuation between a repo name and a mark: `name (#13)`, `name: #13`, `name - #13`.
-const PUNCT_CHAR_RE = /[()[\]:,;–—-]/;
+const PUNCT_CHAR_RE = /[()[\]:,;\u2013\u2014-]/;
 /** Longest word read before a mark; a longer run is no name. */
 const MAX_WORD_LENGTH = 200;
 /** Most characters of the text before a run (the Markdown nodes before it) read for a name. */
 const MAX_LEAD_LENGTH = 300;
 // What may stand between two marks of one list: `#13, #14`, `#13 and PR #14`.
 const LIST_GAP_RE =
-  /^[ \t \r\n]*(?:,[ \t \r\n]*(?:(?:and|or)[ \t \r\n]+)?|(?:and|or|&)[ \t \r\n]+)?(?:(?:prs?|pulls?|pull[ \t \r\n]+requests?|issues?)[ \t \r\n]+)?$/i;
-const NAME_SHAPE_RE = /^[A-Za-z][A-Za-z0-9]*(?:[-_][A-Za-z0-9]+)+$/;
+  /^[ \t\u00a0\r\n]*(?:,[ \t\u00a0\r\n]*(?:(?:and|or)[ \t\u00a0\r\n]+)?|(?:and|or|&)[ \t\u00a0\r\n]+)?(?:(?:prs?|pulls?|pull[ \t\u00a0\r\n]+requests?|issues?)[ \t\u00a0\r\n]+)?$/i;
+const NAME_SHAPE_RE = /^[A-Za-z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)+$/;
 const SLUG_REPO_RE = /^[A-Za-z0-9_-]{1,100}$/;
 
 /**
  * True for a repo name that no English word has: a letter first, then three
- * or more parts joined by `-` or `_`, each of two or more characters with a
- * letter, no digit in the last part (an item id, a version), no dot (a file,
- * `next.js`), and no hyphenated English word (`up-to-date`,
- * `good-first-issue`). Two parts are as often English (`dark-mode`,
- * `tech-debt`, `help-wanted`) as a repo name.
+ * or more parts joined by `-`, each of two or more characters with a letter,
+ * no digit in the last part (an item id, a version), no dot (a file,
+ * `next.js`), no underscore (an identifier, `get_user_id`), and no
+ * hyphenated English word (`up-to-date`, `good-first-issue`). Two parts are
+ * as often English (`dark-mode`, `tech-debt`, `help-wanted`) as a repo name.
  */
 function otherRepoName(name: string): boolean {
   if (name.length > 100 || !NAME_SHAPE_RE.test(name)) return false;
-  const parts = name.toLowerCase().split(/[-_]/);
+  const parts = name.toLowerCase().split("-");
   if (parts.length < 3 || parts.some((part) => part.length < 2 || !/[a-z]/.test(part))) return false;
   if (/\d/.test(parts[parts.length - 1])) return false;
   return !(COMPOUND_HEADS.has(parts[0]) || COMPOUND_TAILS.has(parts[parts.length - 1])
     || parts.slice(1, -1).some((part) => COMPOUND_JOINS.has(part)));
 }
 
-/** True for an owner that is no English word and no folder: a dash, a digit or an inner capital (`MarketData-App`, `AsyncAlchemist`). */
+/**
+ * True for an owner that is no English word, acronym or folder: a lower-case
+ * letter, and a dash or an inner capital (`MarketData-App`, `AsyncAlchemist`,
+ * `brendan-appstart`; never `CI` of `CI/CD`).
+ */
 function ownerName(owner: string): boolean {
-  return OWNER_RE.test(owner) && !owner.endsWith("-") && (/[-0-9]/.test(owner) || /[A-Z]/.test(owner.slice(1)));
+  return /[a-z]/.test(owner) && (owner.includes("-") || /[A-Z]/.test(owner.slice(1)));
 }
 
-/** The repo that a name certainly is: `owner/repo`, the board repo's own name, or an unmistakable repo name. */
+/**
+ * The repo that a name certainly is, else undefined: the board repo's own
+ * name, an unmistakable repo name (of the board repo's owner), or
+ * `owner/repo` with the board repo's owner, or with an owner (ownerName) and
+ * a repo (otherRepoName) that no English word, acronym or folder has.
+ */
 function namedRepo(name: string, github: GithubRepo): GithubRepo | undefined {
   if (name.includes("/")) {
     const parts = name.split("/");
-    if (parts.length !== 2 || !ownerName(parts[0]) || !SLUG_REPO_RE.test(parts[1])) return undefined;
+    if (parts.length !== 2) return undefined;
     const [owner, repo] = parts;
-    const own = owner.toLowerCase() === github.owner.toLowerCase() && repo.toLowerCase() === github.repo.toLowerCase();
-    return own ? github : { owner, repo };
+    if (!OWNER_RE.test(owner) || owner.endsWith("-") || !SLUG_REPO_RE.test(repo)) return undefined;
+    if (owner.toLowerCase() === github.owner.toLowerCase()) {
+      return repo.toLowerCase() === github.repo.toLowerCase() ? github : { owner, repo };
+    }
+    return ownerName(owner) && otherRepoName(repo) ? { owner, repo } : undefined;
   }
   if (name.toLowerCase() === github.repo.toLowerCase()) return github;
   return otherRepoName(name) ? { owner: github.owner, repo: name } : undefined;
 }
 
-/** Leading dots and dashes (`...name`, `--flag`) go; a leading slash stays: an absolute path is no slug. */
-const cleanWord = (word: string) => word.replace(/^[._-]+/, "");
+/** Leading dots (`...name`) go; a leading dash (`--flag`) and a leading slash (an absolute path) stay: no name. */
+const cleanWord = (word: string) => word.replace(/^\.+/, "");
+
+/** True for a word that may stand between a repo name and a mark: a lead-in word, a determiner or an adjective. */
+const leadIn = (lower: string) => LEAD_WORDS.has(lower) || ITEM_WORDS.has(lower) || STATE_WORDS.has(lower);
 
 /** Where the spaces that end at `end` start. */
 function gapStart(text: string, end: number): number {
@@ -360,8 +380,8 @@ function gapStart(text: string, end: number): number {
 /** The word that ends at `end` (a closing quote or a possessive `'s` after it is dropped), or null. */
 function wordBefore(text: string, end: number): Word | null {
   let e = end;
-  if (e >= 2 && /['"’”]/.test(text[e - 1]) && WORD_CHAR_RE.test(text[e - 2])) e -= 1;
-  else if (e >= 3 && /s/i.test(text[e - 1]) && /['’]/.test(text[e - 2]) && WORD_CHAR_RE.test(text[e - 3])) e -= 2;
+  if (e >= 2 && /['"\u2019\u201d]/.test(text[e - 1]) && WORD_CHAR_RE.test(text[e - 2])) e -= 1;
+  else if (e >= 3 && /s/i.test(text[e - 1]) && /['\u2019]/.test(text[e - 2]) && WORD_CHAR_RE.test(text[e - 3])) e -= 2;
   let s = e;
   while (s > 0 && e - s < MAX_WORD_LENGTH && WORD_CHAR_RE.test(text[s - 1])) s -= 1;
   return s < e ? { word: text.slice(s, e), start: s } : null;
@@ -391,48 +411,86 @@ function wordRepo(text: string, w: Word, keyword: boolean, github: GithubRepo, i
   return null;
 }
 
+/** The keyword that `w` is (`PR`, `issue`; the `pull` of `pull request`), or null. */
+function keywordAt(text: string, w: Word): Word | null {
+  if (/^requests?$/i.test(w.word)) {
+    const pull = wordBeforeGap(text, w.start);
+    return pull && /^pull$/i.test(pull.word) ? pull : null;
+  }
+  return ISSUE_KEYWORDS.has(w.word.toLowerCase()) ? w : null;
+}
+
+// The functions below read backwards from a mark. `depth` counts the steps
+// over punctuation: at most two, so a long run of `PR (PR (...` stays cheap.
+
 /**
  * The repo of a mark with punctuation right before it, at `at` (`(#13)`,
- * `see: #13`, the start): the board's, unless an unmistakable repo name or
- * `owner/repo` stands behind the punctuation; then no link.
+ * `see: #13`, the start). A keyword behind the punctuation is read as before
+ * a space (`self-hosted-runner PR: #13` is that repo's). Else the board's
+ * repo, unless an unmistakable repo name or `owner/repo` stands behind the
+ * punctuation (`self-hosted-runner (#13)`): then no link.
  */
-function behindPunctuation(text: string, at: number, github: GithubRepo): IssueRepo {
+function behindPunctuation(text: string, at: number, github: GithubRepo, isBead: IsBead, depth: number): IssueRepo {
   let p = at;
   while (p > 0 && at - p < 3 && PUNCT_CHAR_RE.test(text[p - 1])) p -= 1;
-  if (p === at) return github;
+  if (p === at || depth >= 2) return github;
   const w = wordBefore(text, gapStart(text, p));
-  const named = w ? namedRepo(cleanWord(w.word), github) : undefined;
+  if (!w) return github;
+  const keyword = keywordAt(text, w);
+  if (keyword) return repoBeforeKeyword(text, keyword, github, isBead, depth + 1);
+  const named = namedRepo(cleanWord(w.word), github);
   return named && named !== github ? null : github;
+}
+
+/**
+ * The repo of a mark after `w`, a lead-in word, a determiner or an
+ * adjective, read further back over at most two such words. An unmistakable
+ * repo name there owns the mark when only determiners and adjectives stand
+ * between (`self-hosted-runner draft PR #13`, `self-hosted-runner merged
+ * #13`). With a lead-in verb or preposition between
+ * (`self-hosted-runner approved PR #13`, `self-hosted-runner: fixed in #13`)
+ * the mark may be in either repo: no link. Else the board's repo.
+ */
+function lookBack(text: string, w: Word, github: GithubRepo, isBead: IsBead, depth: number): IssueRepo {
+  let cur = w;
+  let adjectives = true;
+  for (let i = 0; i < 2; i += 1) {
+    const lower = cleanWord(cur.word).toLowerCase();
+    if (!leadIn(lower)) return github;
+    if (!ITEM_WORDS.has(lower) && !STATE_WORDS.has(lower)) adjectives = false;
+    const back = wordBeforeGap(text, cur.start);
+    if (!back || punctOnly(back.word)) {
+      // Punctuation: a repo name behind it (`self-hosted-runner, the PR #13`) may own the mark.
+      return behindPunctuation(text, gapStart(text, cur.start), github, isBead, depth + 1) === github ? github : null;
+    }
+    const named = namedRepo(cleanWord(back.word), github);
+    if (named) return named === github || adjectives ? named : null;
+    cur = back;
+  }
+  return github;
+}
+
+/** The repo that `w`, the word before a mark (or before its keyword), names; a lead-in word is read further back. */
+function repoOfWord(text: string, w: Word, keyword: boolean, github: GithubRepo, isBead: IsBead, depth: number): IssueRepo {
+  const repo = wordRepo(text, w, keyword, github, isBead);
+  return repo === github && leadIn(cleanWord(w.word).toLowerCase()) ? lookBack(text, w, github, isBead, depth) : repo;
+}
+
+/** The repo of a mark after a keyword (`PR`, `issue`): the word before the keyword says. */
+function repoBeforeKeyword(text: string, keyword: Word, github: GithubRepo, isBead: IsBead, depth: number): IssueRepo {
+  const at = gapStart(text, keyword.start);
+  const name = at < keyword.start ? wordBefore(text, at) : null;
+  if (!name || punctOnly(name.word)) return behindPunctuation(text, at, github, isBead, depth);
+  return repoOfWord(text, name, true, github, isBead, depth);
 }
 
 /** The repo of the mark at `hash`, which follows a space, punctuation or the start. */
 function repoBeforeSpace(text: string, hash: number, github: GithubRepo, isBead: IsBead): IssueRepo {
   const at = gapStart(text, hash);
-  let w = at < hash ? wordBefore(text, at) : null;
-  if (!w || punctOnly(w.word)) return behindPunctuation(text, at, github);
-  if (/^requests?$/i.test(w.word)) {
-    const pull = wordBeforeGap(text, w.start);
-    if (pull && /^pull$/i.test(pull.word)) w = pull;
-  }
-  if (!ISSUE_KEYWORDS.has(w.word.toLowerCase())) return wordRepo(text, w, false, github, isBead);
-  // A keyword: the word before it says.
-  const kat = gapStart(text, w.start);
-  const name = kat < w.start ? wordBefore(text, kat) : null;
-  if (!name || punctOnly(name.word)) return behindPunctuation(text, kat, github);
-  const repo = wordRepo(text, name, true, github, isBead);
-  if (repo !== github) return repo;
-  // Up to two adjectives may stand between a repo name and the keyword: `self-hosted-runner merged PR #13`.
-  let cur: Word = name;
-  for (let i = 0; i < 2; i += 1) {
-    const lower = cur.word.toLowerCase();
-    if (!ITEM_WORDS.has(lower) && !STATE_WORDS.has(lower)) break;
-    const back = wordBeforeGap(text, cur.start);
-    if (!back) break;
-    const named = namedRepo(cleanWord(back.word), github);
-    if (named) return named;
-    cur = back;
-  }
-  return github;
+  const w = at < hash ? wordBefore(text, at) : null;
+  if (!w || punctOnly(w.word)) return behindPunctuation(text, at, github, isBead, 0);
+  const keyword = keywordAt(text, w);
+  return keyword ? repoBeforeKeyword(text, keyword, github, isBead, 0) : repoOfWord(text, w, false, github, isBead, 0);
 }
 
 /**
@@ -446,7 +504,7 @@ function repoGlued(text: string, hash: number, offset: number, github: GithubRep
   // Part of a slug (`owner/repo#N` is the qualified rule's), a path, a mention or a longer run.
   if (s > 0 && /[A-Za-z0-9._\/@-]/.test(text[s - 1])) return { start: s, repo: null };
   const word: Word = { word: text.slice(s, hash), start: s };
-  if (s < offset) return { start: hash, repo: wordRepo(text, word, false, github, isBead) };
+  if (s < offset) return { start: hash, repo: repoOfWord(text, word, false, github, isBead, 0) };
   if (isBead?.(word.word) || !/^[A-Za-z0-9]/.test(word.word)) return { start: s, repo: null };
   return { start: s, repo: namedRepo(word.word, github) ?? null };
 }
@@ -470,10 +528,10 @@ function issueMarks(text: string, lead: string, github: GithubRepo, isBead: IsBe
   const offset = before.length;
   const urls = urlSpans(full);
   // The `owner/repo#N` marks, by their end: the qualified rule links them, and a list goes on in their repo.
-  const qualified = new Map<number, GithubRepo>();
+  const qualified = new Map<number, { start: number; repo: GithubRepo }>();
   collect(QUALIFIED_ISSUE_RE, full, (m, start) => {
     const repo = qualifiedRepo(m);
-    if (repo) qualified.set(start + m[0].length - m[1].length, repo);
+    if (repo) qualified.set(start + m[0].length - m[1].length, { start, repo });
   });
   const out: Candidate[] = [];
   let prev: { end: number; repo: IssueRepo } | null = null;
@@ -488,7 +546,12 @@ function issueMarks(text: string, lead: string, github: GithubRepo, isBead: IsBe
     if (url < urls.length && urls[url][0] <= hash) continue;
     const named = qualified.get(end);
     if (named) {
-      prev = { end, repo: named };
+      prev = { end, repo: named.repo };
+      // `owner/repo` in the node before (`` `owner/repo`#13 ``): the qualified rule reads only this text, so the mark links here.
+      if (named.start < offset && hash >= offset) {
+        out.push({ kind: "issue", start: hash - offset, end: end - offset, priority: PRIORITY.issue,
+          href: `https://github.com/${named.repo.owner}/${named.repo.repo}/issues/${m[1]}` });
+      }
       continue;
     }
     const ch = hash > 0 ? full[hash - 1] : "";

@@ -94,20 +94,27 @@ assert.deepEqual(kinds("55e6b91 #654 owner/repo#3", { ...ctx, github: null }), [
     "self-hosted-runner issue #13", "self-hosted-runner bug #13", "self-hosted-runner's PR #13", "'self-hosted-runner' PR #13",
     "fixed in self-hosted-runner PR #13.", "self-hosted-runner\nPR #13", "self-hosted-runner draft PR #13",
     "self-hosted-runner new PR #13", "self-hosted-runner open PR #13", "self-hosted-runner merged PR #13",
-    "self-hosted-runner's new draft PR #13", "self-hosted-runner latest issue #13"]) {
+    "self-hosted-runner's new draft PR #13", "self-hosted-runner latest issue #13", "self-hosted-runner merged #13",
+    "self-hosted-runner opened #13", "self-hosted-runner closed #13", "self-hosted-runner linked #13",
+    "self-hosted-runner PR: #13", "self-hosted-runner PR (#13)", "self-hosted-runner issue - #13",
+    "self-hosted-runner pull request: #13"]) {
     assert.deepEqual(issues(text), [["#13", runner(13)]], text);
   }
-  assert.deepEqual(issues("code_review_bot #13"), [["#13", "https://github.com/MarketData-App/code_review_bot/issues/13"]]);
+  assert.deepEqual(issues("code-review-bot #13"), [["#13", "https://github.com/MarketData-App/code-review-bot/issues/13"]]);
   // The name keeps its case: GitHub reads a repo name in any case.
   assert.deepEqual(issues("Self-Hosted-Runner PR #13"), [["#13", "https://github.com/MarketData-App/Self-Hosted-Runner/issues/13"]]);
   // Glued to the name, the whole token is the link (as `owner/repo#N` is).
   assert.deepEqual(issues("see self-hosted-runner#13 now"), [["self-hosted-runner#13", runner(13)]]);
-  // `owner/repo` before the mark names that repo, when the owner is no word or folder.
+  // `owner/repo` before the mark names that repo: with the board repo's
+  // owner, or with an owner and a repo that are no English word, acronym or folder.
   assert.deepEqual(issues("MarketData-App/self-hosted-runner PR #13"), [["#13", runner(13)]]);
-  assert.deepEqual(issues("agentwatch-sh/provisioner issue #4"), [["#4", "https://github.com/agentwatch-sh/provisioner/issues/4"]]);
-  assert.deepEqual(issues("AsyncAlchemist/dotfiles #4"), [["#4", "https://github.com/AsyncAlchemist/dotfiles/issues/4"]]);
+  assert.deepEqual(issues("marketdata-app/provisioner issue #4"), [["#4", "https://github.com/marketdata-app/provisioner/issues/4"]]);
+  assert.deepEqual(issues("brendan-appstart/bead-me-up-scotty PR #95"), [["#95", "https://github.com/brendan-appstart/bead-me-up-scotty/issues/95"]]);
+  assert.deepEqual(issues("AsyncAlchemist/code-review-bot #4"), [["#4", "https://github.com/AsyncAlchemist/code-review-bot/issues/4"]]);
   for (const text of ["and/or #3", "client/server PR #3", "Client/Server #3", "lib/repo-refs.ts #3", "a/b/c #3",
-    "packages/web-client #12", "docs/getting-started #3", "/opt/self-hosted-runner #3", "./self-hosted-runner/x #3",
+    "packages/web-client #12", "docs/getting-started #3", "web-client/src PR #12", "e2e/tests #3", "CI/CD PR #12",
+    "UI/UX PR #7", "QA/UAT #3", "iOS/Android PR #4", "PR/MR #3", "HTTP/2 PR #4", "Q3/Q4 #3", "v1/v2 #3",
+    "agentwatch-sh/provisioner issue #4", "/opt/self-hosted-runner #3", "./self-hosted-runner/x #3",
     "https://github.com/MarketData-App/self-hosted-runner/pull/13 #13"]) {
     assert.deepEqual(issues(text), [], text);
   }
@@ -139,19 +146,28 @@ assert.deepEqual(kinds("55e6b91 #654 owner/repo#3", { ...ctx, github: null }), [
     "help-wanted #3", "unit-test PR #5", "time-boxed #2", "high-priority #5", "high-priority issue #5", "docs-only PR #6",
     "re-open #7", "good-first-issue #5", "up-to-date #8", "work-in-progress PR #9", "ready-for-review #3", "do-not-merge #3",
     "pre-existing issue #3", "cross-repo PR #3", "self-hosted #3", "x-ray #3", "UTF-8 #3", "SHA-256 #3", "agent-v2 #3",
-    "ds-n6b #3", "README.md #3", "next.js PR #3", "follow-up#4", "pre-commit#5", "daily-standup-v2 #3"]) {
+    "ds-n6b #3", "README.md #3", "next.js PR #3", "follow-up#4", "pre-commit#5", "daily-standup-v2 #3",
+    "do-it-yourself #3", "not-yet-implemented #3", "follow-up-work PR #3", "customer-reported-bug #5", "code_review_bot #13",
+    "get_user_id PR #12", "MAX_PATH_LENGTH #3", "--no-verify-ssl #3"]) {
     assert.deepEqual(issues(text), [], text);
   }
   // An unmistakable repo name behind punctuation may own the mark: no link.
   for (const text of ["self-hosted-runner (#13)", "self-hosted-runner (PR #13)", "self-hosted-runner: #13",
     "self-hosted-runner, PR #13", "(self-hosted-runner) PR #13", "self-hosted-runner – #13", "self-hosted-runner - #13",
-    "MarketData-App/self-hosted-runner (#13)"]) {
+    "MarketData-App/self-hosted-runner (#13)", "self-hosted-runner, the PR #13"]) {
+    assert.deepEqual(issues(text), [], text);
+  }
+  // A verb or a preposition between a repo name and the mark: either repo may own it, no link.
+  for (const text of ["self-hosted-runner approved PR #13", "self-hosted-runner shipped PR #13", "self-hosted-runner reverted PR #13",
+    "self-hosted-runner: fixed in #13", "self-hosted-runner fixes #13", "updated code-review-bot for #13"]) {
     assert.deepEqual(issues(text), [], text);
   }
 
   // A list goes on in the repo of its first mark.
   assert.deepEqual(issues("self-hosted-runner PRs #13 and #14"), [["#13", runner(13)], ["#14", runner(14)]]);
   assert.deepEqual(issues("self-hosted-runner #13, #14, and PR #15"), [["#13", runner(13)], ["#14", runner(14)], ["#15", runner(15)]]);
+  assert.deepEqual(issues("self-hosted-runner PRs: #13, #14"), [["#13", runner(13)], ["#14", runner(14)]]);
+  assert.deepEqual(issues("self-hosted-runner PRs (#13, #14)"), [["#13", runner(13)], ["#14", runner(14)]]);
   assert.deepEqual(issues("agentwatch-sh/provisioner#5 & #6").map((k) => k[1]), ["https://github.com/agentwatch-sh/provisioner/issues/5", "https://github.com/agentwatch-sh/provisioner/issues/6"]);
   assert.deepEqual(issues("step #3 and #4"), []);
   assert.deepEqual(issues("fixes #3 and #4").map((k) => k[1]), [own(3), own(4)]);
@@ -249,6 +265,7 @@ assert.deepEqual(links("README.md 55e6b91 #654 age-36g", { github: null }), []);
   assert.deepEqual(issues("self-hosted-runner **PR** #13"), [["#13", runner(13), false]]);
   assert.deepEqual(issues("[self-hosted-runner](https://example.com) PR #13"), [["#13", runner(13), false]]);
   assert.deepEqual(issues("`self-hosted-runner`#13"), [["#13", runner(13), false]]);
+  assert.deepEqual(issues("`brendan-appstart/bead-me-up-scotty`#95"), [["#95", "https://github.com/brendan-appstart/bead-me-up-scotty/issues/95", false]]);
   assert.deepEqual(issues("self-hosted-runner PR **#13**"), [["#13", runner(13), false]]);
   assert.deepEqual(issues("self-hosted-runner PR `#13`"), [["#13", runner(13), true]]);
   assert.deepEqual(issues("**self-hosted-runner PR #13** and #14"), [["#13", runner(13), false], ["#14", runner(14), false]]);
