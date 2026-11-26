@@ -1,6 +1,7 @@
 // Browser checks for the To Review view, on an isolated server and a disposable bd board only.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { chromium } from "playwright";
 import { renderChoice } from "../lib/human-choices.ts";
 const base = process.env.SCOTTY_TEST_URL;
@@ -149,6 +150,8 @@ try {
   const sent = checkBodies.find((b) => b.id === cited);
   assert.deepEqual([sent.close_reason, sent.review_by, sent.cite["board.review_cite_words"], typeof sent.cite["board.review_cite_record"], typeof sent.closed_at],
     ["Responded", CITED_AGENT, "use option two", "string", "string"]);
+  // The check names the comment the row shows as the answer, by its SHA-256 (agentwatch's choice_digest).
+  assert.equal(sent.comment_sha256, createHash("sha256").update("Use option two.", "utf8").digest("hex"));
   for (const id of [forged, unreachable]) {
     await row(id).getByText("An agent's answer (not checked)").waitFor();
     const neutral = await row(id).innerText();

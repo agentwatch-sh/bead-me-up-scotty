@@ -28,10 +28,12 @@ const CITE_RECHECK_MS = 3000;
  * The item's cite keys are bd metadata that any local writer can set, so the
  * row names the words as the operator's only when the host's cite check
  * (meta.citeCheckUrl, lib/review.ts citeCheckBody) answers `{"bound": true}`.
+ * The check names the comment the row shows as the answer (its digest), so a
+ * comment slipped in as the cited agent is never shown under the heading.
  * No URL, an error, an unreachable host or any other answer: false.
  */
-function useCiteCheck(bead: Bead, url: string | null | undefined): boolean {
-  const body = React.useMemo(() => citeCheckBody(bead), [bead]);
+function useCiteCheck(bead: Bead, actor: string, url: string | null | undefined): boolean {
+  const body = React.useMemo(() => citeCheckBody(bead, actor), [bead, actor]);
   const key = body ? JSON.stringify(body) : null;
   const [bound, setBound] = React.useState<string | null>(null);
   React.useEffect(() => {
@@ -200,7 +202,7 @@ function ReviewRow({ bead, actor, disabled: bulkBusy, onHold }: { bead: Bead; ac
   // An agent's answer with a cite of the operator's chat words (agentwatch age-29t6): named
   // as the operator's words only when the host's answer record binds it; else not checked.
   const cite = answer?.cite;
-  const checked = useCiteCheck(bead, meta?.citeCheckUrl);
+  const checked = useCiteCheck(bead, actor, meta?.citeCheckUrl);
   const shownCite = cite && checked ? cite : null;
   const unchecked = !!cite && !checked;
   const reason = bead.metadata?.[REVIEW_REASON_KEY];

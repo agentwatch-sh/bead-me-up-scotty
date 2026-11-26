@@ -1,5 +1,6 @@
 // Pure contract tests for lib/review.ts; no server or board data required.
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import vm from "node:vm";
@@ -197,26 +198,56 @@ console.log("PASS needsReview: closed, pending, latest answer is the manager's; 
   }
 
   // citeCheckBody: what To Review asks the host; the host's row decides (agentwatch's cite check).
-  const body = review.citeCheckBody(citedBead({ by: "agent:s", author: "agent:s" }));
+  const sha = (text) => createHash("sha256").update(text, "utf8").digest("hex");
+  const body = review.citeCheckBody(citedBead({ by: "agent:s", author: "agent:s" }), H);
   assert.deepEqual({ ...body, cite: { ...body.cite } }, {
     id: "x-1", close_reason: "Responded", closed_at: T(30), review_by: "agent:s",
+    comment_sha256: sha("Use option two."),
     cite: {
       "board.review_cite_session": "aw-lead", "board.review_cite_typed_at": "2026-11-25T14:57:00Z",
       "board.review_cite_words": "use option two", "board.review_cite_record": RECORD,
     },
   });
-  assert.equal(review.citeCheckBody(managerBead()), null, "a manager answer is not checked");
-  assert.equal(review.citeCheckBody(beadWithoutCiteRecord({ by: "agent:s", author: "agent:s" })), null);
-  assert.equal(review.citeCheckBody({ ...citedBead({ by: "agent:s", author: "agent:s" }), closed_at: null }), null);
+  assert.equal(review.citeCheckBody(managerBead(), H), null, "a manager answer is not checked");
+  assert.equal(review.citeCheckBody(beadWithoutCiteRecord({ by: "agent:s", author: "agent:s" }), H), null);
+  assert.equal(review.citeCheckBody({ ...citedBead({ by: "agent:s", author: "agent:s" }), closed_at: null }, H), null);
   const odd = citedBead({ by: "agent:s", author: "agent:s" });
   odd.metadata["board.review_cite_words"] = 5;
-  assert.equal("board.review_cite_words" in review.citeCheckBody(odd).cite, false, "only string keys go");
+  assert.equal("board.review_cite_words" in review.citeCheckBody(odd, H).cite, false, "only string keys go");
+
+  // Review of age-29t6 (F1): the check names the comment that the row shows under the cited
+  // heading, by its SHA-256 as agentwatch's board answers hashes it (board.cited.comment_digest),
+  // and the host binds it to its row's choice_digest. A comment that a local writer slips in as
+  // the cited agent just before the close is shown, so its digest goes and the host says not bound.
+  const { commentDigest } = review;
+  for (let n = 0; n <= 200; n++) assert.equal(commentDigest("x".repeat(n)), sha("x".repeat(n)), `${n} bytes`);
+  for (const text of ["Use option two.", "Ünïcödé ✓ 👍", "line one\nline two", "é".repeat(40), "c".repeat(1000)]) {
+    assert.equal(commentDigest(text), sha(text), text.slice(0, 20));
+  }
+  for (const text of ["lone \ud800", "lone \udc00 low", "\ud83d"]) assert.equal(commentDigest(text), "", "no UTF-8 form: no digest names it");
+  const slippedAfter = citedBead({ by: "agent:s", comments: [
+    { author: "agent:s", text: "Use option two.", created_at: T(20) },
+    { author: "agent:s", text: "Use option one.", created_at: T(25) },
+  ] });
+  assert.equal(reviewAnswer(slippedAfter, H).text, "Use option one.", "the row shows the latest comment");
+  assert.equal(review.citeCheckBody(slippedAfter, H).comment_sha256, sha("Use option one."), "the check names the comment shown");
+  const slippedBefore = citedBead({ by: "agent:s", comments: [
+    { author: "agent:s", text: "Use option one.", created_at: T(21) },
+    { author: "agent:s", text: "Use option two.", created_at: T(22) },
+  ] });
+  assert.equal(review.citeCheckBody(slippedBefore, H).comment_sha256, sha("Use option two."), "the answer shown: its digest");
+  // A comment-less cited Dismiss shows no comment: null. A comment slipped in beside it is shown: its digest.
+  assert.equal(review.citeCheckBody(citedBead({ by: "agent:s", comments: [], close: "Dismissed" }), H).comment_sha256, null);
+  assert.equal(review.citeCheckBody(citedBead({ by: "agent:s", comments: [{ author: "agent:s", text: "my own note", created_at: T(10) }], close: "Dismissed" }), H).comment_sha256,
+    null, "an earlier comment is no answer: none shown");
+  assert.equal(review.citeCheckBody(citedBead({ by: "link:taylor/s", comments: [{ author: "link:taylor/s", text: "Use option one.", created_at: T(25) }], close: "Dismissed" }), H).comment_sha256,
+    sha("Use option one."));
 
   // Needs You on an item that a cited answer closed: an agent's answer, never "your manager".
   const { validateHumanAnswer } = load("human-validate");
   const verdict = validateHumanAnswer(citedBead({ by: "agent:s", author: "agent:s" }), { action: "respond", text: "No." }, { closedOk: false });
   assert.deepEqual({ ...verdict }, { ok: false, status: 409, error: "An agent answered this; review it in To Review.", code: "agent_answered" });
-  console.log("PASS citedAnswerer, needsReview, reviewAnswer and citeCheckBody: an agent's answer with a cite; only comments after the answer (age-29t6)");
+  console.log("PASS citedAnswerer, needsReview, reviewAnswer and citeCheckBody: an agent's answer with a cite; only comments after the answer; the check names the comment shown (age-29t6)");
 }
 
 // A fake store. `fail` maps a step name to a count of calls to fail; `after` makes the step do its
